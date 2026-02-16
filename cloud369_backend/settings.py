@@ -42,12 +42,12 @@ cloudinary.config(
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-33$sy5mee*i8du7@fndsr9omfv=@rs-a0f#&%dauzr8o03kc*(')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
+DEBUG = False
 
 ALLOWED_HOSTS = [
-    ".ngrok-free.dev",
-    "localhost",
-    "127.0.0.1",
+    
+    # "localhost",
+    # "127.0.0.1",
     "club369-backend.onrender.com", 
     "club369-frontend.pages.dev",
     "club369.com",                
@@ -207,17 +207,17 @@ SIMPLE_JWT = {
 }
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-    "https://club369.pages.dev", # Replace with your Cloudflare Pages URL
+    # "http://localhost:3000",
+    # "http://localhost:5173",
+    # "http://127.0.0.1:3000",
+    # "http://127.0.0.1:5173",
+    "https://club369-frontend.pages.dev/", # Replace with your Cloudflare Pages URL
 ]
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://club369.pages.dev", # Replace with your Cloudflare Pages URL
+    # "http://localhost:3000",
+    # "http://localhost:5173",
+    "https://club369-frontend.pages.dev/", # Replace with your Cloudflare Pages URL
 ]
 
