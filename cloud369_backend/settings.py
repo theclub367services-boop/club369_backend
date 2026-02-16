@@ -115,14 +115,7 @@ if DATABASE_URL:
             conn_max_age=600
         )
     }
-else:
-    # Local Development Fallback
-    DATABASES = {
-        'default': dj_database_url.config(
-            default='postgresql://postgres:Theclub@369@db.bslpbndftiythddvyfuq.supabase.co:5432/postgres',
-            conn_max_age=600
-        )
-    }
+
 
 
 # Password validation
