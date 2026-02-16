@@ -38,14 +38,17 @@ cloudinary.config(
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-33$sy5mee*i8du7@fndsr9omfv=@rs-a0f#&%dauzr8o03kc*('
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-33$sy5mee*i8du7@fndsr9omfv=@rs-a0f#&%dauzr8o03kc*(')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = [
     ".ngrok-free.dev",
     "localhost",
+    "127.0.0.1",
+    "your-backend.onrender.com", # Replace with your Render URL
+    "club369.com",                # Replace with your custom domain
 ]
 
 
@@ -67,6 +70,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -107,15 +111,30 @@ WSGI_APPLICATION = 'cloud369_backend.wsgi.application'
 # }
 
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'club369',      # your database name
+#         'USER': 'root',
+#         'PASSWORD': 'Inmakes@09',
+#         'HOST': 'localhost',
+#         'PORT': '3306',
+#     }
+# }
+
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'club369',      # your database name
-        'USER': 'root',
-        'PASSWORD': 'Inmakes@09',
-        'HOST': 'localhost',
-        'PORT': '3306',
-    }
+    'default': dj_database_url.parse(os.environ.get("DATABASE_URL"))
+}
+
+
+
+import dj_database_url
+
+DATABASES = {
+    'default': dj_database_url.config(
+        default='postgresql://postgres:Ajanthan@123@localhost:5432/club369',
+        conn_max_age=600
+    )
 }
 
 
@@ -154,8 +173,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-import os
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
@@ -198,11 +218,13 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
+    "https://club369.pages.dev", # Replace with your Cloudflare Pages URL
 ]
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
+    "https://club369.pages.dev", # Replace with your Cloudflare Pages URL
 ]
 
