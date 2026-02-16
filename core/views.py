@@ -138,7 +138,7 @@ class CreateRazorpayOrderView(views.APIView):
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
-        amount =4999 * 100 
+        amount =1 * 100 
         
         order_data = {
             'amount': amount,
