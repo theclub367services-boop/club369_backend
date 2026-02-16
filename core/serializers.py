@@ -3,6 +3,10 @@ from .models import User, Membership, Payment, TransactionLedger, Voucher, UserV
 import base64
 import uuid
 from django.core.files.base import ContentFile
+import cloudinary.uploader
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Base64ImageField(serializers.ImageField):
     def to_internal_value(self, data):
@@ -65,13 +69,30 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ('name', 'email', 'phone', 'password', 'profilePicture')
 
     def create(self, validated_data):
+        profile_image = validated_data.pop('profile_image', None)
+        
         user = User.objects.create_user(
             email=validated_data['email'],
             phone=validated_data['phone'],
             full_name=validated_data['full_name'],
-            password=validated_data['password'],
-            profile_image=validated_data.get('profile_image')
+            password=validated_data['password']
         )
+        
+        if profile_image:
+            try:
+                # Upload to Cloudinary
+                upload_result = cloudinary.uploader.upload(
+                    profile_image,
+                    folder=f"club369/profile_pics/{user.id}",
+                    transformation="c_fill,w_200,h_200,q_auto:good"
+                )
+                user.profile_pic = upload_result.get('secure_url')
+                user.profile_pic_public_id = upload_result.get('public_id')
+                user.save()
+            except Exception as e:
+                logger.error(f"Failed to upload profile picture to Cloudinary: {str(e)}")
+                # Continue without image rather than breaking registration
+        
         return user
 
 
