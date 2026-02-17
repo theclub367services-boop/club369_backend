@@ -49,8 +49,8 @@ ALLOWED_HOSTS = [
     # "localhost",
     # "127.0.0.1",
     "club369-backend.onrender.com", 
-    "club369-frontend.pages.dev",
-    "club369.com",                
+    #"club369-frontend.pages.dev",
+    "theclub369.com",                
 ]
 
 
@@ -211,13 +211,13 @@ CORS_ALLOWED_ORIGINS = [
     # "http://localhost:5173",
     # "http://127.0.0.1:3000",
     # "http://127.0.0.1:5173",
-    "https://club369-frontend.pages.dev", # Replace with your Cloudflare Pages URL
+    "https://theclub369.com", # Replace with your Cloudflare Pages URL
 ]
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     # "http://localhost:3000",
     # "http://localhost:5173",
-    "https://club369-frontend.pages.dev", # Replace with your Cloudflare Pages URL
+    "https://theclub369.com", # Replace with your Cloudflare Pages URL
 ]
 
