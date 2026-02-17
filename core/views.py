@@ -162,7 +162,10 @@ class CreateRazorpayOrderView(views.APIView):
             return Response({
                 "success": True,
                 "message": "Order initiated successfully",
-                "data": razorpay_order
+                "data": {
+                    **razorpay_order,
+                    "key_id": settings.RAZORPAY_KEY_ID
+                }
             }, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({
