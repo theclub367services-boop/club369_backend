@@ -42,15 +42,13 @@ cloudinary.config(
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-33$sy5mee*i8du7@fndsr9omfv=@rs-a0f#&%dauzr8o03kc*(')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+# DEBUG = False
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [
-    
-    # "localhost",
-    # "127.0.0.1",
-    "club369-backend.onrender.com", 
-    "club369-frontend.pages.dev",
-    "club369.com",                
+    "localhost",
+    "127.0.0.1",
+    "club369-backend.onrender.com",
 ]
 
 
@@ -65,6 +63,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'core',
 ]
@@ -202,22 +201,31 @@ SIMPLE_JWT = {
     'AUTH_COOKIE_REFRESH': 'refresh_token',
     'AUTH_COOKIE_HTTP_ONLY': True,
     'AUTH_COOKIE_PATH': '/',
-    'AUTH_COOKIE_SAMESITE': 'None',
-    'AUTH_COOKIE_SECURE': True,
+    'AUTH_COOKIE_SAMESITE': 'Lax' if DEBUG else 'None',
+    'AUTH_COOKIE_SECURE': not DEBUG,
 }
 
 CORS_ALLOWED_ORIGINS = [
-    # "http://localhost:3000",
-    # "http://localhost:5173",
-    # "http://127.0.0.1:3000",
-    # "http://127.0.0.1:5173",
-    "https://club369-frontend.pages.dev", # Replace with your Cloudflare Pages URL
+    "https://theclub369.com",
+    "https://www.theclub369.com",
+]
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
-    # "http://localhost:3000",
-    # "http://localhost:5173",
-    "https://club369-frontend.pages.dev", # Replace with your Cloudflare Pages URL
+    "https://theclub369.com",
+    "https://www.theclub369.com",
+    "http://localhost",
+    "http://127.0.0.1",
+]
+# For CSRF to work with custom ports on localhost
+import re
+CSRF_TRUSTED_ORIGIN_HOSTS = [
+    r"localhost:\d+",
+    r"127\.0\.0\.1:\d+",
 ]
 
