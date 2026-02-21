@@ -46,8 +46,8 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-33$sy5mee*i8du7@fnd
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [
-    # "localhost",
-    # "127.0.0.1",
+    "localhost",
+    "127.0.0.1",
     "club369-backend.onrender.com",
 ]
 
@@ -210,22 +210,22 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.theclub369.com",
 ]
 
-# CORS_ALLOWED_ORIGIN_REGEXES = [
-#     r"^http://localhost:\d+$",
-#     r"^http://127\.0\.0\.1:\d+$",
-# ]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+]
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "https://theclub369.com",
     "https://www.theclub369.com",
-    # "http://localhost",
-    # "http://127.0.0.1",
+    "http://localhost",
+    "http://127.0.0.1",
 ]
 # For CSRF to work with custom ports on localhost
-# import re
-# CSRF_TRUSTED_ORIGIN_HOSTS = [
-#     r"localhost:\d+",
-#     r"127\.0\.0\.1:\d+",
-# ]
+import re
+CSRF_TRUSTED_ORIGIN_HOSTS = [
+    r"localhost:\d+",
+    r"127\.0\.0\.1:\d+",
+]
 
