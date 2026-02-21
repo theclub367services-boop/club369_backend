@@ -49,6 +49,7 @@ ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
     "club369-backend.onrender.com",
+    "api.theclub369.com",
 ]
 
 
@@ -166,10 +167,12 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
-    # HSTS settings
     SECURE_HSTS_SECONDS = 31536000 # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+
+SESSION_COOKIE_SAMESITE = 'None'
+CSRF_COOKIE_SAMESITE = 'None'
 
 AUTH_USER_MODEL = 'core.User'
 
