@@ -42,18 +42,67 @@ cloudinary.config(
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-33$sy5mee*i8du7@fndsr9omfv=@rs-a0f#&%dauzr8o03kc*(')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-# DEBUG = False
+# --- MASTER ENVIRONMENT CONFIGURATION ---
+# Detect environment based on Render variable
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
+# 1. ALLOWED HOSTS
 if DEBUG:
     ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 else:
+    # Restoring the production domains you need
     ALLOWED_HOSTS = [
         "theclub369.com", 
         "www.theclub369.com", 
         "api.theclub369.com",
         "club369-backend.onrender.com"
     ]
+
+# 2. CORS & CSRF SETTINGS
+CORS_ALLOW_CREDENTIALS = True
+
+if DEBUG:
+    # Local development origins
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:9000", # Quasar default
+        "http://127.0.0.1:9000",
+        "http://localhost:3000", # Fallback for other tools
+    ]
+    CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+else:
+    # Production origins for theclub369.com
+    CORS_ALLOWED_ORIGINS = [
+        "https://theclub369.com",
+        "https://www.theclub369.com",
+        "https://api.theclub369.com",
+    ]
+    CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+
+# 3. COOKIE & SECURITY SETTINGS
+# Use 'Lax' for first-party cookie flow under the same root domain
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+if DEBUG:
+    SESSION_COOKIE_DOMAIN = None
+    CSRF_COOKIE_DOMAIN = None
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+else:
+    # The leading dot is what allows sharing between 'api' and 'www'
+    SESSION_COOKIE_DOMAIN = '.theclub369.com'
+    CSRF_COOKIE_DOMAIN = '.theclub369.com'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+    # Production-only Security Headers
+    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'True') == 'True'
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = 31536000 # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 
 # Application definition
@@ -162,29 +211,8 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-# --- Security & Cookie Settings ---
-if DEBUG:
-    SESSION_COOKIE_DOMAIN = None
-    CSRF_COOKIE_DOMAIN = None
-    SESSION_COOKIE_SECURE = False
-    CSRF_COOKIE_SECURE = False
-    SESSION_COOKIE_SAMESITE = 'Lax'
-    CSRF_COOKIE_SAMESITE = 'Lax'
-else:
-    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'True') == 'True'
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_HSTS_SECONDS = 31536000 # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SESSION_COOKIE_DOMAIN = '.theclub369.com'
-    CSRF_COOKIE_DOMAIN = '.theclub369.com'
-    SESSION_COOKIE_SAMESITE = 'Lax'
-    CSRF_COOKIE_SAMESITE = 'Lax'
+# --- Security & Cookie Settings Placeholder ---
+# (Configured in Master Environment Block)
 
 AUTH_USER_MODEL = 'core.User'
 
@@ -217,30 +245,12 @@ SIMPLE_JWT = {
     'AUTH_COOKIE_HTTP_ONLY': True,
     'AUTH_COOKIE_PATH': '/',
     'AUTH_COOKIE_SAMESITE': 'Lax',
-    'AUTH_COOKIE_SECURE': True,
-    'AUTH_COOKIE_DOMAIN': '.theclub369.com' if not DEBUG else None,
+    'AUTH_COOKIE_SECURE': CSRF_COOKIE_SECURE,
+    'AUTH_COOKIE_DOMAIN': CSRF_COOKIE_DOMAIN,
 }
 
-if DEBUG:
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
-    CSRF_TRUSTED_ORIGINS = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
-else:
-    CORS_ALLOWED_ORIGINS = [
-        "https://theclub369.com",
-        "https://www.theclub369.com",
-        "https://api.theclub369.com",
-    ]
-    CSRF_TRUSTED_ORIGINS = [
-        "https://theclub369.com",
-        "https://www.theclub369.com",
-        "https://api.theclub369.com",
-    ]
+# --- CORS & CSRF Origins Placeholder ---
+# (Configured in Master Environment Block)
 # For CSRF to work with custom ports on localhost
 import re
 CSRF_TRUSTED_ORIGIN_HOSTS = [
