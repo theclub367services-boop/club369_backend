@@ -33,7 +33,8 @@ class JWTCookieMiddleware(MiddlewareMixin):
                     httponly=settings.SIMPLE_JWT['AUTH_COOKIE_HTTP_ONLY'],
                     secure=settings.SIMPLE_JWT.get('AUTH_COOKIE_SECURE', False),
                     samesite=settings.SIMPLE_JWT['AUTH_COOKIE_SAMESITE'],
-                    path=settings.SIMPLE_JWT['AUTH_COOKIE_PATH']
+                    path=settings.SIMPLE_JWT['AUTH_COOKIE_PATH'],
+                    domain=settings.SIMPLE_JWT.get('AUTH_COOKIE_DOMAIN')
                 )
 
             if refresh_token:
@@ -44,7 +45,8 @@ class JWTCookieMiddleware(MiddlewareMixin):
                     httponly=settings.SIMPLE_JWT['AUTH_COOKIE_HTTP_ONLY'],
                     secure=settings.SIMPLE_JWT.get('AUTH_COOKIE_SECURE', False),
                     samesite=settings.SIMPLE_JWT['AUTH_COOKIE_SAMESITE'],
-                    path=settings.SIMPLE_JWT['AUTH_COOKIE_PATH']
+                    path=settings.SIMPLE_JWT['AUTH_COOKIE_PATH'],
+                    domain=settings.SIMPLE_JWT.get('AUTH_COOKIE_DOMAIN')
                 )
 
             # Cleanup session bridging key
