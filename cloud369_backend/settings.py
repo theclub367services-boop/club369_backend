@@ -26,6 +26,9 @@ RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID')
 RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET')
 RAZORPAY_WEBHOOK_SECRET = os.getenv('RAZORPAY_WEBHOOK_SECRET', 'your_secret_here')
 
+#Password Reset Token Expiry (in seconds)
+PASSWORD_RESET_TIMEOUT = 86400  # 24 hours in seconds
+
 # Cloudinary Configuration
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
