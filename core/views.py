@@ -6,12 +6,7 @@ from django.utils import timezone
 from django.db import transaction
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User, Membership, Payment, TransactionLedger, Voucher, UserVoucher, AdminActivityLog, PaymentOrder
-from .serializers import (
-    UserSerializer, RegisterSerializer, 
-    MembershipSerializer, PaymentSerializer, TransactionLedgerSerializer, 
-    VoucherSerializer, UserVoucherSerializer, AdminActivityLogSerializer,
-    MembershipDetailSerializer, AdminVoucherSerializer
-)
+from .serializers import (UserSerializer, RegisterSerializer,  MembershipSerializer, PaymentSerializer, TransactionLedgerSerializer, VoucherSerializer, UserVoucherSerializer, AdminActivityLogSerializer, MembershipDetailSerializer, AdminVoucherSerializer)
 from django.conf import settings
 import os
 import razorpay
@@ -20,8 +15,10 @@ import time
 import cloudinary.utils
 import cloudinary.uploader
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework.views import APIView
-from rest_framework.decorators import api_view, permission_classes
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.core.mail import send_mail
 
 # --- Authentication ---
 
@@ -393,94 +390,6 @@ class RazorpayWebhookView(APIView):
 
         return Response({"status": "event processed"}, status=status.HTTP_200_OK)
 
-# class CreatePaymentView(views.APIView):
-#     permission_classes = (permissions.IsAuthenticated,)
-
-#     @transaction.atomic
-#     def post(self, request):
-#         user = request.user
-#         # Allow users with 'PENDING' or 'ACTIVE' status (standard renewals)
-#         if user.status not in ['PENDING', 'ACTIVE']:
-#             return Response({'error': f'User account status {user.status} does not allow payments'}, status=status.HTTP_403_FORBIDDEN)
-
-#         current_date = timezone.now().date()
-        
-#         # Check for existing active membership
-#         existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
-        
-#         start_date = current_date
-        
-#         if existing_membership:
-#             # Rule 1: Renewal Window Enforcement (5 days before end_date)
-#             renewal_allowed_date = existing_membership.end_date - timezone.timedelta(days=5)
-            
-#             if current_date < renewal_allowed_date:
-#                 return Response(
-#                     {"error": "Membership already active or payment already processed"}, 
-#                     status=status.HTTP_400_BAD_REQUEST
-#                 )
-            
-#             # Rule 2: Duplicate Payment Protection
-#             # Check if a successful payment already exists for the renewal of this membership
-#             # (i.e., a membership starting after the current one)
-#             if Membership.objects.filter(user=user, start_date=existing_membership.end_date + timezone.timedelta(days=1)).exists():
-#                  return Response(
-#                     {"error": "Membership already active or payment already processed"}, 
-#                     status=status.HTTP_400_BAD_REQUEST
-#                 )
-
-#             # Renewal Flow: new_start_date = current_end_date + 1
-#             start_date = existing_membership.end_date + timezone.timedelta(days=1)
-
-#         data = request.data
-#         membership_data = data.get('membership', {})
-#         payment_data = data.get('payment', {})
-
-#         # Create Membership
-#         # Default duration is 30 days as per renewal logic instruction
-#         end_date = start_date + timezone.timedelta(days=30)
-        
-#         membership = Membership.objects.create(
-#             user=user,
-#             plan_name=membership_data.get('plan_name', 'Standard Renewal'),
-#             amount=membership_data.get('amount', 0),
-#             start_date=start_date,
-#             end_date=end_date,
-#             status='ACTIVE'
-#         )
-
-#         # Create Payment
-#         payment = Payment.objects.create(
-#             user=user,
-#             membership=membership,
-#             amount=payment_data.get('amount', 0),
-#             payment_mode=payment_data.get('payment_mode', 'UPI'),
-#             transaction_id=payment_data.get('transaction_id'),
-#             payment_status='SUCCESS', # Mock successful payment for MVP
-#             paid_at=timezone.now()
-#         )
-
-#         # Create Ledger Entry
-#         TransactionLedger.objects.create(
-#             payment=payment,
-#             user=user,
-#             amount=payment.amount,
-#             transaction_type='CREDIT',
-#             description=f"Membership payment for {membership.plan_name}"
-#         )
-
-#         # Update user status to ACTIVE if it was PENDING
-#         if user.status == 'PENDING':
-#             user.status = 'ACTIVE'
-#             user.save()
-
-#         return Response({
-#             'status': 'Payment processed successfully', 
-#             'membership_id': membership.id,
-#             'start_date': start_date,
-#             'end_date': end_date
-#         })
-
 class MembershipDetailView(generics.RetrieveAPIView):
     serializer_class = MembershipDetailSerializer
     permission_classes = (permissions.IsAuthenticated,)
@@ -678,3 +587,48 @@ class SaveProfilePicView(APIView):
             "image_url": new_url
         }, status=status.HTTP_200_OK)
 
+
+# Password Reset Views
+
+class ForgotPasswordView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        user = User.objects.filter(email=email).first()
+        
+        # We always return success to prevent email enumeration (security best practice)
+        if user:
+            token = default_token_generator.make_token(user)
+            uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+            
+            # This link points to your React frontend route
+            reset_url = f"{settings.FRONTEND_URL}/password-reset/{uidb64}/{token}"
+            
+            send_mail(
+                subject='Password Reset Request - CLUB369',
+                message=f'Click the link below to reset your password. It is valid for 24 hours:\n\n{reset_url}',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        
+        return Response({"message": "If an account matches this email, a reset link has been sent."}, status=status.HTTP_200_OK)
+
+class PasswordResetConfirmView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, uidb64, token):
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+
+        if user and default_token_generator.check_token(user, token):
+            new_password = request.data.get('password')
+            user.set_password(new_password)
+            user.save()
+            return Response({"message": "Password updated successfully!"}, status=status.HTTP_200_OK)
+        
+        return Response({"error": "This link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
