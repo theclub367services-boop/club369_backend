@@ -45,7 +45,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    # UNUSED (identified by static analysis - safe to remove later)
+    # updated_at = models.DateTimeField(auto_now=True)
 
     objects = UserManager()
 
@@ -73,7 +74,8 @@ class Membership(models.Model):
     @property
     def effective_status(self):
         if self.status == 'ACTIVE' and self.end_date < timezone.now().date():
-            return 'EXPIRED'
+            return 'EXPIRED' 
+            # It doesnt update the status to expired in the database,actually most efficient way,update the database status, but architecturally, it is not a good idea,silently trigger UPDATE SQL queries in the background. Your API endpoint will suddenly become very slow.
         return self.status
 
     def __str__(self):
@@ -136,12 +138,25 @@ class UserVoucher(models.Model):
     class Meta:
         unique_together = ('user', 'voucher')
 
-class AdminActivityLog(models.Model):
-    admin = models.ForeignKey(User, on_delete=models.CASCADE, related_name='admin_logs')
-    action = models.CharField(max_length=255)
-    target_id = models.CharField(max_length=100, null=True, blank=True)
-    remarks = models.TextField(null=True, blank=True)
+# UNUSED MODEL - candidate for deletion
+# class AdminActivityLog(models.Model):
+#     admin = models.ForeignKey(User, on_delete=models.CASCADE, related_name='admin_logs')
+#     action = models.CharField(max_length=255)
+#     target_id = models.CharField(max_length=100, null=True, blank=True)
+#     remarks = models.TextField(null=True, blank=True)
+#     created_at = models.DateTimeField(auto_now_add=True)
+
+import uuid
+
+class UserSession(models.Model):
+    id = models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='active_sessions')
+    session_key = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"{self.user.email} - {self.session_key}"
 
 class PaymentOrder(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -153,3 +168,26 @@ class PaymentOrder(models.Model):
 
     def __str__(self):
         return f"{self.razorpay_order_id} - {self.status}"
+
+class AutoPaySubscription(models.Model):
+    STATUS_CHOICES = (
+        ('ENABLED', 'Enabled'),
+        ('CANCELLED', 'Cancelled'),
+    )
+    CYCLE_STATUS_CHOICES = (
+        ('PAID', 'Paid'),
+        ('UNPAID', 'Unpaid'),
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='autopay_subscriptions')
+    razorpay_subscription_id = models.CharField(max_length=255, unique=True, db_index=True)
+    autopay_status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='ENABLED')
+    current_cycle_status = models.CharField(max_length=15, choices=CYCLE_STATUS_CHOICES, default='UNPAID')
+    last_payment_date = models.DateTimeField(null=True, blank=True)
+    # UNUSED (identified by static analysis - safe to remove later)
+    # next_billing_date = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    # UNUSED (identified by static analysis - safe to remove later)
+    # updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.razorpay_subscription_id} - {self.autopay_status}"

@@ -5,10 +5,12 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.utils import timezone
+from django.utils import timezone
+from datetime import timedelta
 from django.db import transaction
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, Membership, Payment, TransactionLedger, Voucher, UserVoucher, AdminActivityLog, PaymentOrder
-from .serializers import (UserSerializer, RegisterSerializer,  MembershipSerializer, PaymentSerializer, TransactionLedgerSerializer, VoucherSerializer, UserVoucherSerializer, AdminActivityLogSerializer, MembershipDetailSerializer, AdminVoucherSerializer)
+from .models import User, Membership, Payment, TransactionLedger, Voucher, UserVoucher, PaymentOrder, AutoPaySubscription, UserSession
+from .serializers import (UserSerializer, RegisterSerializer,  MembershipSerializer, PaymentSerializer, TransactionLedgerSerializer, VoucherSerializer, UserVoucherSerializer, MembershipDetailSerializer, AdminVoucherSerializer,CustomTokenObtainPairSerializer)
 from django.conf import settings
 import os
 import razorpay
@@ -18,9 +20,30 @@ import cloudinary.utils
 import cloudinary.uploader
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.tokens import default_token_generator
+import logging
+
+logger = logging.getLogger(__name__)
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.core.mail import send_mail
+import calendar
+
+def add_one_month(source_date):
+    """Adds exactly one calendar month to a date (or datetime), capping the day if necessary."""
+    month = source_date.month
+    year = source_date.year
+    day = source_date.day
+    
+    if month == 12:
+        month = 1
+        year += 1
+    else:
+        month += 1
+        
+    last_day_of_month = calendar.monthrange(year, month)[1]
+    day = min(day, last_day_of_month)
+    
+    return source_date.replace(year=year, month=month, day=day)
 
 # --- Authentication ---
 
@@ -44,12 +67,16 @@ class LoginView(TokenObtainPairView):
         
         user = serializer.user
 
-        # 2. User Session Creation
-        login(request, user)
+        # 2. Lightweight User Session Creation (Absolute Timeout Tracking)
+        timeout_hours = getattr(settings, 'ABSOLUTE_SESSION_TIMEOUT_HOURS', 24)
+        expires_at = timezone.now() + timedelta(hours=timeout_hours) # 24h absolute timeout
+        session = UserSession.objects.create(user=user, expires_at=expires_at)
 
         # 3. Token Generation
-        refresh = RefreshToken.for_user(user)
-        
+        # Inject the session_key into the token claims so we don't need DB lookups on normal requests
+        refresh = CustomTokenObtainPairSerializer.get_token(user)
+        refresh['session_key'] = str(session.session_key)
+
         # 4. Session Bridging
         request.session['jwt_tokens'] = {
             'access': str(refresh.access_token),
@@ -74,6 +101,25 @@ class CustomTokenRefreshView(TokenRefreshView):
         if not refresh_token:
             return Response({"error": "Refresh token missing"}, status=status.HTTP_401_UNAUTHORIZED)
         
+        # Absolute Session Validation (Every 15 minutes when refresh happens)
+        try:
+            token_obj = RefreshToken(refresh_token)
+            session_key = token_obj.get('session_key')
+            
+            if not session_key:
+                return Response({"error": "Invalid session token"}, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Look up the session in the DB
+            session = UserSession.objects.get(session_key=session_key)
+            
+            if timezone.now() > session.expires_at:
+                # Session expired, force hard delete
+                session.delete()
+                return Response({"error": "Session expired"}, status=status.HTTP_401_UNAUTHORIZED)
+                
+        except (UserSession.DoesNotExist, Exception) as e:
+            return Response({"error": "Invalid or expired session"}, status=status.HTTP_401_UNAUTHORIZED)
+
         # Inject into request data for parent view
         request.data['refresh'] = refresh_token
         
@@ -81,10 +127,16 @@ class CustomTokenRefreshView(TokenRefreshView):
         response = super().post(request, *args, **kwargs)
         
         if response.status_code == 200:
+            # Preserve session_key inside the new tokens
+            new_refresh = RefreshToken(response.data.get('refresh'))
+            new_refresh['session_key'] = session_key
+            
+            new_access = new_refresh.access_token
+
             # 4. Session Re-Bridging
             request.session['jwt_tokens'] = {
-                'access': response.data.get('access'),
-                'refresh': response.data.get('refresh')
+                'access': str(new_access),
+                'refresh': str(new_refresh)
             }
             # 5. Success Response
             return Response({"message": "Tokens refreshed successfully"}, status=status.HTTP_200_OK)
@@ -100,7 +152,16 @@ class LogoutView(views.APIView):
     permission_classes = (permissions.AllowAny,)
 
     def post(self, request):
-        # 1. Session Invalidation
+        # 1. Session Invalidation (Hard Delete via Token Claim)
+        refresh_token = request.COOKIES.get(settings.SIMPLE_JWT['AUTH_COOKIE_REFRESH'])
+        if refresh_token:
+            try:
+                token_obj = RefreshToken(refresh_token)
+                session_key = token_obj.get('session_key')
+                UserSession.objects.filter(session_key=session_key).delete()
+            except Exception:
+                pass # If token is invalid or missing session_key, gracefully proceed to delete cookies
+
         logout(request)
 
         # 2. Cookie Deletion
@@ -137,7 +198,18 @@ class CreateRazorpayOrderView(views.APIView):
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
-        amount =1 * 100 
+        user = request.user
+
+        # Prevent manual order if AutoPay is ENABLED
+        existing_autopay = AutoPaySubscription.objects.filter(user=user, autopay_status='ENABLED').first()
+        if existing_autopay:
+            return Response({
+                "success": False,
+                "message": "AutoPay is active. Manual renewal not allowed.",
+                "errors": "autopay_active"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        amount = 4999 * 100
         
         order_data = {
             'amount': amount,
@@ -254,7 +326,7 @@ class VerifyPaymentView(views.APIView):
                     plan_name='Membership Plan',
                     amount=order.amount,
                     start_date=start_date,
-                    end_date=start_date + timezone.timedelta(days=30),
+                    end_date=add_one_month(start_date),
                     status='ACTIVE'
                 )
 
@@ -362,7 +434,7 @@ class RazorpayWebhookView(APIView):
                     plan_name="Membership Plan",
                     amount=order.amount,
                     start_date=start_date,
-                    end_date=start_date + timezone.timedelta(days=30),
+                    end_date=add_one_month(start_date),
                     status="ACTIVE"
                 )
 
@@ -428,9 +500,9 @@ class AdminMarkAsPaidView(views.APIView):
             membership = Membership.objects.create(
                 user=target_user,
                 plan_name='Manual Admin Activation',
-                amount=4999.00,  # Ensure correct mount
+                amount=4999.00,
                 start_date=start_date,
-                end_date=start_date + timezone.timedelta(days=30),
+                end_date=add_one_month(start_date),
                 status='ACTIVE'
             )
             
@@ -563,7 +635,7 @@ class AdminVoucherToggleView(views.APIView):
             voucher.save()
             return Response({'status': 'Voucher status updated', 'is_active': voucher.is_active})
         except Voucher.DoesNotExist:
-            return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_NOT_FOUND)
 class AdminVoucherDeleteView(views.APIView):
     permission_classes = (permissions.IsAdminUser,)
 
@@ -585,6 +657,11 @@ class AdminMarkAsPaidView(views.APIView):
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        # Prevent manual extension if AutoPay is ENABLED
+        existing_autopay = AutoPaySubscription.objects.filter(user=user, autopay_status='ENABLED').first()
+        if existing_autopay:
+            return Response({'error': 'AutoPay is active. Manual renewal not allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+
         amount = request.data.get('amount', 4999.00)
         
         current_date = timezone.now().date()
@@ -594,7 +671,7 @@ class AdminMarkAsPaidView(views.APIView):
         if existing_membership and existing_membership.end_date >= current_date:
             start_date = existing_membership.end_date + timezone.timedelta(days=1)
 
-        end_date = start_date + timezone.timedelta(days=30)
+        end_date = add_one_month(start_date)
         
         membership = Membership.objects.create(
             user=user,
@@ -741,3 +818,298 @@ class PasswordResetConfirmView(views.APIView):
             return Response({"message": "Password updated successfully!"}, status=status.HTTP_200_OK)
         
         return Response({"error": "This link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+# --- AutoPay Subscriptions MVP ---
+
+
+class EnableAutoPayView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        # Prevent if already enabled
+        existing = AutoPaySubscription.objects.filter(user=user, autopay_status='ENABLED').first()
+        if existing:
+            return Response({'error': 'AutoPay is already enabled'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Create Razorpay Plan if needed, or assume you have a base PLAN_ID
+        # Hardcoding generic subscription details for MVP based on 4999 monthly
+        # Note: You need a real plan_id from your Razorpay Dashboard in production.
+        PLAN_ID = os.getenv('RAZORPAY_AUTOPAY_PLAN_ID') 
+        if not PLAN_ID:
+            return Response({'error': 'Server misconfiguration: No Plan ID'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            subscription = client.subscription.create({
+                "plan_id": PLAN_ID,
+                "customer_notify": 1,
+                "total_count": 12, # 1 year validity assumed
+                "notes": {
+                    "user_id": user.id,
+                }
+            })
+
+            AutoPaySubscription.objects.create(
+                user=user,
+                razorpay_subscription_id=subscription.get('id'),
+                autopay_status='PENDING',
+                current_cycle_status='UNPAID'
+            )
+
+            return Response({
+                "success": True,
+                "message": "AutoPay subscription created",
+                "data": {
+                    "subscription_id": subscription.get('id'),
+                    "key_id": settings.RAZORPAY_KEY_ID
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class CancelAutoPayView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        subscription = AutoPaySubscription.objects.filter(user=user, autopay_status='ENABLED').first()
+        
+        if not subscription:
+            return Response({'error': 'No active AutoPay subscription found'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            client.subscription.cancel(subscription.razorpay_subscription_id)
+            subscription.autopay_status = 'CANCELLED'
+            subscription.save()
+
+            return Response({"message": "AutoPay cancelled successfully"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class AutoPayVerifyPaymentView(views.APIView):
+    """
+    Immediate Payment Verification After Razorpay Checkout for AutoPay
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        payment_id = request.data.get('payment_id')
+        subscription_id = request.data.get('subscription_id')
+        signature = request.data.get('signature')
+
+        if not payment_id or not subscription_id or not signature:
+            logger.error("autopay_signature_verification_failed: missing parameters")
+            return Response({"error": "Missing parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            client.utility.verify_subscription_payment_signature({
+                'razorpay_subscription_id': subscription_id,
+                'razorpay_payment_id': payment_id,
+                'razorpay_signature': signature
+            })
+            logger.info(f"autopay_signature_verified for subscription {subscription_id}")
+        except razorpay.errors.SignatureVerificationError:
+            logger.error(f"autopay_signature_verification_failed for subscription {subscription_id}")
+            return Response({"error": "Invalid signature"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Ensure Idempotency
+        if Payment.objects.filter(transaction_id=payment_id).exists():
+            return Response({"status": "already processed", "message": "Access already granted"}, status=status.HTTP_200_OK)
+
+        sub = AutoPaySubscription.objects.filter(razorpay_subscription_id=subscription_id).first()
+        if not sub:
+            return Response({"error": "Subscription not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get actual payment amount
+        try:
+            pmt = client.payment.fetch(payment_id)
+            amount = pmt.get('amount', 0) / 100
+        except Exception:
+            amount = 4999.00 # fallback
+
+        with transaction.atomic():
+            sub.autopay_status = 'ENABLED'
+            sub.current_cycle_status = 'PAID'
+            sub.last_payment_date = timezone.now()
+            sub.save()
+
+            if user.status == 'PENDING':
+                user.status = 'ACTIVE'
+                user.save()
+
+            # Extend or Create Membership for this billing cycle
+            current_date = timezone.now().date()
+            existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
+            
+            start_date = current_date
+            if existing_membership:
+                start_date = existing_membership.end_date + timezone.timedelta(days=1)
+
+            membership = Membership.objects.create(
+                user=user,
+                plan_name='AutoPay Membership',
+                amount=amount,
+                start_date=start_date,
+                end_date=add_one_month(start_date),
+                status='ACTIVE',
+                auto_pay_enabled=True
+            )
+            
+            payment = Payment.objects.create(
+                user=user,
+                membership=membership,
+                amount=amount,
+                payment_mode='AUTOPAY',
+                transaction_id=payment_id,
+                payment_status="SUCCESS",
+                paid_at=timezone.now()
+            )
+
+            TransactionLedger.objects.create(
+                payment=payment,
+                user=user,
+                amount=amount,
+                transaction_type="CREDIT",
+                description=f"AutoPay instant verified: {payment_id}"
+            )
+        
+        logger.info(f"autopay_checkout_success and premium activated for {user.email}")
+        return Response({"status": "success", "message": "Premium access activated instantly"}, status=status.HTTP_200_OK)
+
+@method_decorator(csrf_exempt, name='dispatch')
+class RazorpayAutoPayWebhookView(APIView):
+    """
+    Dedicated webhook specifically for handling AutoPay Subscriptions events.
+    """
+    permission_classes = [] 
+
+    def post(self, request):
+        webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None)
+        if not webhook_secret:
+            return Response({"error": "Webhook secret not configured"}, status=status.HTTP_200_OK)
+
+        received_signature = request.headers.get("X-Razorpay-Signature")
+        body = request.body
+
+        try:
+            client.utility.verify_webhook_signature(
+                body.decode('utf-8'),
+                received_signature,
+                webhook_secret
+            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        payload = json.loads(body)
+        # print("WEBHOOK PAYLOAD RECEIVED:", json.dumps(payload, indent=2))
+        event = payload.get("event")
+
+        # Handle subscription charged
+        # For Razorpay Subscriptions, the primary success event is subscription.charged.
+        # It contains both the subscription entity and the payment entity.
+        if event in ["subscription.charged", "payment.captured"]:
+            # Extract payment entity
+            payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+            razorpay_payment_id = payment_entity.get("id")
+            amount = payment_entity.get("amount", 0) / 100
+            
+            # Extract subscription entity (present in subscription.charged)
+            subscription_entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+            sub_id = subscription_entity.get("id") or payment_entity.get("subscription_id")
+            
+            # Notes are attached to the subscription, not the payment
+            notes = subscription_entity.get("notes", {}) or payment_entity.get("notes", {})
+            user_id = notes.get("user_id") if isinstance(notes, dict) else None
+            
+            sub = None
+            if sub_id:
+                sub = AutoPaySubscription.objects.filter(razorpay_subscription_id=sub_id).first()
+            elif user_id:
+                sub = AutoPaySubscription.objects.filter(user_id=user_id, autopay_status__in=['ENABLED', 'PENDING']).first()
+
+            if not sub:
+                return Response({"status": "subscription not found"}, status=status.HTTP_200_OK)
+
+            if Payment.objects.filter(transaction_id=razorpay_payment_id).exists():
+                return Response({"status": "already processed"}, status=status.HTTP_200_OK)
+
+            with transaction.atomic():
+                sub.autopay_status = 'ENABLED'
+                sub.current_cycle_status = 'PAID'
+                sub.last_payment_date = timezone.now()
+                sub.save()
+
+                user = sub.user
+
+                if user.status == 'PENDING':
+                    user.status = 'ACTIVE'
+                    user.save()
+
+                # Extend or Create Membership for this billing cycle
+                current_date = timezone.now().date()
+                existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
+                
+                start_date = current_date
+                if existing_membership:
+                    start_date = existing_membership.end_date + timezone.timedelta(days=1)
+
+                membership = Membership.objects.create(
+                    user=user,
+                    plan_name='AutoPay Membership',
+                    amount=amount,
+                    start_date=start_date,
+                    end_date=add_one_month(start_date),
+                    status='ACTIVE',
+                    auto_pay_enabled=True
+                )
+                
+                payment = Payment.objects.create(
+                    user=user,
+                    membership=membership,
+                    amount=amount,
+                    payment_mode='AUTOPAY',
+                    transaction_id=razorpay_payment_id,
+                    payment_status="SUCCESS",
+                    paid_at=timezone.now()
+                )
+
+                TransactionLedger.objects.create(
+                    payment=payment,
+                    user=user,
+                    amount=amount,
+                    transaction_type="CREDIT",
+                    description=f"AutoPay captured: {razorpay_payment_id}"
+                )
+
+        # Handle subscription failed
+        elif event == "payment.failed":
+            # For AutoPay, failed payments should mark cycle as UNPAID
+            payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+            notes = payment_entity.get("notes", {})
+            user_id = notes.get("user_id") if isinstance(notes, dict) else None
+            
+            sub = None
+            if user_id:
+                sub = AutoPaySubscription.objects.filter(user_id=user_id, autopay_status__in=['ENABLED', 'PENDING']).first()
+            if not sub and "subscription_id" in payment_entity:
+                sub = AutoPaySubscription.objects.filter(razorpay_subscription_id=payment_entity["subscription_id"]).first()
+
+            if sub:
+                sub.current_cycle_status = 'UNPAID'
+                sub.save()
+
+        # Handle subscription cancelled remotely
+        elif event == "subscription.cancelled":
+            subscription_entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+            subscription_id = subscription_entity.get("id")
+            
+            sub = AutoPaySubscription.objects.filter(razorpay_subscription_id=subscription_id).first()
+            if sub:
+                sub.autopay_status = 'CANCELLED'
+                sub.save()
+
+        return Response({"status": "autopay event processed"}, status=status.HTTP_200_OK)

@@ -52,6 +52,8 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 # 1. ALLOWED HOSTS
 if DEBUG:
     ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+    # Development-only ngrok support
+    # ALLOWED_HOSTS += [".ngrok-free.app", ".ngrok-free.dev"]
 else:
     # Restoring the production domains you need
     ALLOWED_HOSTS = [
@@ -71,6 +73,13 @@ if DEBUG:
         "http://127.0.0.1:9000",
         "http://localhost:3000", # Fallback for other tools
     ]
+    # Development-only ngrok support
+    # CORS_ALLOWED_ORIGINS += [
+    #     "https://*.ngrok-free.app",
+    #     "https://*.ngrok-free.dev",
+    #     "http://*.ngrok-free.app",
+    #     "http://*.ngrok-free.dev"
+    # ]
     CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 else:
     # Production origins for theclub369.com
@@ -234,9 +243,13 @@ REST_FRAMEWORK = {
 
 
 from datetime import timedelta
+
+# SaaS Session Limits
+ABSOLUTE_SESSION_TIMEOUT_HOURS = 24
+
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=10),
-    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=30),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'ALGORITHM': 'HS256',

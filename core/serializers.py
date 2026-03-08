@@ -1,12 +1,23 @@
 from rest_framework import serializers
-from .models import User, Membership, Payment, TransactionLedger, Voucher, UserVoucher, AdminActivityLog
+from .models import User, Membership, Payment, TransactionLedger, Voucher, UserVoucher
 import base64
 import uuid
 from django.core.files.base import ContentFile
 import cloudinary.uploader
 import logging
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
 
 logger = logging.getLogger(__name__)
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token['email'] = getattr(user, 'email', '')
+        token['role'] = getattr(user, 'role', 'USER')
+        # session_key is injected from the view after creation
+        return token
 
 class Base64ImageField(serializers.ImageField):
     def to_internal_value(self, data):
@@ -44,6 +55,14 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_membership_status(self, obj):
         membership = obj.memberships.filter(status='ACTIVE').order_by('-end_date').first()
+        is_membership_active = membership and membership.effective_status == 'ACTIVE'
+
+        autopay = getattr(obj, 'autopay_subscriptions', None)
+        active_autopay = autopay.filter(autopay_status='ENABLED', current_cycle_status='PAID').exists() if autopay else False
+
+        if is_membership_active or active_autopay:
+            return 'ACTIVE'
+            
         return membership.effective_status if membership else 'INACTIVE'
 
     def get_last_payment_date(self, obj):
@@ -105,15 +124,19 @@ class MembershipSerializer(serializers.ModelSerializer):
 class MembershipDetailSerializer(serializers.ModelSerializer):
     expiryDate = serializers.DateField(source='end_date')
     nextBillingDate = serializers.DateField(source='end_date') # Simplified for now
+    startDate = serializers.DateField(source='start_date')
     autopayStatus = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
 
     class Meta:
         model = Membership
-        fields = ('status', 'expiryDate', 'nextBillingDate', 'autopayStatus')
+        fields = ('status', 'startDate', 'expiryDate', 'nextBillingDate', 'autopayStatus')
 
     def get_autopayStatus(self, obj):
-        return 'active' if obj.auto_pay_enabled else 'inactive'
+        autopay = getattr(obj.user, 'autopay_subscriptions', None)
+        if autopay and autopay.filter(autopay_status='ENABLED').exists():
+            return 'active'
+        return 'inactive'
 
     def get_status(self, obj):
         return obj.effective_status.upper()
@@ -128,11 +151,11 @@ class TransactionLedgerSerializer(serializers.ModelSerializer):
     method = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     user_name = serializers.CharField(source='user.full_name', read_only=True)
-    
+    transaction_id = serializers.CharField(source='payment.transaction_id', read_only=True)
 
     class Meta:
         model = TransactionLedger
-        fields = ('id', 'user', 'user_name', 'date', 'amount', 'status', 'method')
+        fields = ('id', 'user', 'user_name', 'date', 'amount', 'status', 'method','transaction_id')
 
     def get_method(self, obj):
         return obj.payment.payment_mode if obj.payment else 'Unknown'
@@ -168,11 +191,12 @@ class UserVoucherSerializer(serializers.ModelSerializer):
         model = UserVoucher
         fields = ('id', 'user', 'voucher', 'voucher_details', 'status', 'claimed_at', 'used_at')
 
-class AdminActivityLogSerializer(serializers.ModelSerializer):
-    admin_name = serializers.CharField(source='admin.full_name', read_only=True)
-    class Meta:
-        model = AdminActivityLog
-        fields = '__all__'
+# UNUSED SERIALIZER - candidate for deletion
+# class AdminActivityLogSerializer(serializers.ModelSerializer):
+#     admin_name = serializers.CharField(source='admin.full_name', read_only=True)
+#     class Meta:
+#         model = AdminActivityLog
+#         fields = '__all__'
 
 
 class AdminVoucherSerializer(serializers.ModelSerializer):

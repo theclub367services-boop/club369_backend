@@ -6,7 +6,8 @@ from .views import (
     CustomTokenRefreshView, MembershipDetailView, UserTransactionListView,
     AdminVoucherListView, AdminVoucherCreateView, AdminVoucherDeleteView, AdminVoucherToggleView,
     AdminUserDeleteView, CreateRazorpayOrderView, VerifyPaymentView, RazorpayWebhookView,
-    GetUploadSignatureView, SaveProfilePicView, AdminMarkAsPaidView
+    GetUploadSignatureView, SaveProfilePicView, AdminMarkAsPaidView,
+    EnableAutoPayView, CancelAutoPayView, RazorpayAutoPayWebhookView, AutoPayVerifyPaymentView
 )
 
 
@@ -47,4 +48,10 @@ urlpatterns = [
     path('admin/vouchers/<int:pk>/delete/', AdminVoucherDeleteView.as_view(), name='admin-voucher-delete'),
     path('admin/users/<int:pk>/delete/', AdminUserDeleteView.as_view(), name='admin-user-delete'),
     path('admin/mark-as-paid/<int:user_id>/', AdminMarkAsPaidView.as_view(), name='admin-mark-paid'),
+
+    # AutoPay Subscriptions MVP
+    path('autopay/enable/', EnableAutoPayView.as_view(), name='autopay-enable'),
+    path('autopay/cancel/', CancelAutoPayView.as_view(), name='autopay-cancel'),
+    path('autopay/webhook/', RazorpayAutoPayWebhookView.as_view(), name='autopay-webhook'),
+    path('autopay/verify-payment/', AutoPayVerifyPaymentView.as_view(), name='autopay-verify-payment'),
 ]
