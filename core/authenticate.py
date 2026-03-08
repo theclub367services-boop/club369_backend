@@ -28,6 +28,11 @@ class CustomJWTAuthentication(JWTAuthentication):
             # Ensure it passes basic isAuthenticated checks
             user.is_active = True
             
+            # Map ADMIN role to Django's is_staff so DRF's IsAdminUser permission works
+            if role == 'ADMIN':
+                user.is_staff = True
+                user.is_superuser = True
+            
             return user, validated_token
         except Exception:
             return None

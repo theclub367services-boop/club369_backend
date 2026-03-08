@@ -188,7 +188,9 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = (permissions.IsAuthenticated,)
 
     def get_object(self):
-        return self.request.user
+        # Fetch the actual database user because the request.user from 
+        # stateless JWT authentication only contains id, email, and role.
+        return User.objects.get(id=self.request.user.id)
 
 # --- Membership & Payments ---
 
@@ -209,7 +211,7 @@ class CreateRazorpayOrderView(views.APIView):
                 "errors": "autopay_active"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = 4999 * 100
+        amount = 1 * 100  # 4999 * 100
         
         order_data = {
             'amount': amount,
@@ -249,7 +251,8 @@ class VerifyPaymentView(views.APIView):
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
-        user = request.user
+        # Fetch actual DB user because request.user is stateless
+        user = User.objects.get(id=request.user.id)
         data = request.data
         
         razorpay_payment_id = data.get('razorpay_payment_id')
@@ -500,7 +503,7 @@ class AdminMarkAsPaidView(views.APIView):
             membership = Membership.objects.create(
                 user=target_user,
                 plan_name='Manual Admin Activation',
-                amount=4999.00,
+                amount=1.00,  # 4999.00
                 start_date=start_date,
                 end_date=add_one_month(start_date),
                 status='ACTIVE'
@@ -509,7 +512,7 @@ class AdminMarkAsPaidView(views.APIView):
             payment = Payment.objects.create(
                 user=target_user,
                 membership=membership,
-                amount=4999.00,
+                amount=1.00, # 4999.00
                 payment_mode='MANUAL',
                 transaction_id=f'MANUAL_{target_user.id}_{int(time.time())}',
                 payment_status='SUCCESS',
@@ -519,7 +522,7 @@ class AdminMarkAsPaidView(views.APIView):
             TransactionLedger.objects.create(
                 payment=payment,
                 user=target_user,
-                amount=4999.00,
+                amount=1.00, # 4999.00
                 transaction_type='CREDIT',
                 description=f"Admin manual payment collection. User: {target_user.email}"
             )
@@ -662,7 +665,7 @@ class AdminMarkAsPaidView(views.APIView):
         if existing_autopay:
             return Response({'error': 'AutoPay is active. Manual renewal not allowed.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = request.data.get('amount', 4999.00)
+        amount = request.data.get('amount', 1.00) # 4999.00
         
         current_date = timezone.now().date()
         existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
@@ -745,7 +748,8 @@ class SaveProfilePicView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        user = request.user
+        # Fetch actual DB user because request.user is stateless
+        user = User.objects.get(id=request.user.id)
         new_url = request.data.get("secure_url")
         new_public_id = request.data.get("public_id")
 
@@ -833,7 +837,7 @@ class EnableAutoPayView(views.APIView):
             return Response({'error': 'AutoPay is already enabled'}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1. Create Razorpay Plan if needed, or assume you have a base PLAN_ID
-        # Hardcoding generic subscription details for MVP based on 4999 monthly
+        # Hardcoding generic subscription details for MVP based on 1.00 testing monthly (was 4999.00)
         # Note: You need a real plan_id from your Razorpay Dashboard in production.
         PLAN_ID = os.getenv('RAZORPAY_AUTOPAY_PLAN_ID') 
         if not PLAN_ID:
@@ -894,7 +898,8 @@ class AutoPayVerifyPaymentView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        user = request.user
+        # Fetch actual DB user because request.user is stateless
+        user = User.objects.get(id=request.user.id)
         payment_id = request.data.get('payment_id')
         subscription_id = request.data.get('subscription_id')
         signature = request.data.get('signature')
@@ -929,7 +934,7 @@ class AutoPayVerifyPaymentView(views.APIView):
             pmt = client.payment.fetch(payment_id)
             amount = pmt.get('amount', 0) / 100
         except Exception:
-            amount = 4999.00 # fallback
+            amount = 1.00 # fallback
 
         with transaction.atomic():
             sub.autopay_status = 'ENABLED'
