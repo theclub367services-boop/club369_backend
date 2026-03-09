@@ -40,10 +40,11 @@ class UserSerializer(serializers.ModelSerializer):
     membership_status = serializers.SerializerMethodField()
     last_payment_date = serializers.SerializerMethodField()
     membership_end_date = serializers.SerializerMethodField()
+    autopay_status = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'name', 'email', 'mobile', 'profile_picture', 'profile_pic', 'profile_pic_public_id', 'role', 'status', 'created_at', 'membership_status', 'last_payment_date', 'membership_end_date')
+        fields = ('id', 'name', 'email', 'mobile', 'profile_picture', 'profile_pic', 'profile_pic_public_id', 'role', 'status', 'created_at', 'membership_status', 'last_payment_date', 'membership_end_date', 'autopay_status')
         read_only_fields = ('id', 'email', 'role', 'status', 'created_at')
 
     def get_profile_picture(self, obj):
@@ -75,6 +76,18 @@ class UserSerializer(serializers.ModelSerializer):
             # Fallback to expired if no active exists
             membership = obj.memberships.all().order_by('-end_date').first()
         return membership.end_date.isoformat() if membership else None
+
+    def get_autopay_status(self, obj):
+        autopay = getattr(obj, 'autopay_subscriptions', None)
+        if autopay:
+            sub = autopay.filter(autopay_status='ENABLED').first()
+            if sub:
+                return 'ENABLED'
+            cancelled = autopay.filter(autopay_status='CANCELLED').first()
+            if cancelled:
+                return 'CANCELLED'
+            return 'DISABLED'
+        return 'DISABLED'
 
 
 class RegisterSerializer(serializers.ModelSerializer):

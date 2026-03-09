@@ -7,7 +7,7 @@ from .views import (
     AdminVoucherListView, AdminVoucherCreateView, AdminVoucherDeleteView, AdminVoucherToggleView,
     AdminUserDeleteView, CreateRazorpayOrderView, VerifyPaymentView, RazorpayWebhookView,
     GetUploadSignatureView, SaveProfilePicView, AdminMarkAsPaidView,
-    EnableAutoPayView, CancelAutoPayView, RazorpayAutoPayWebhookView, AutoPayVerifyPaymentView
+    EnableAutoPayView, CancelAutoPayView, RazorpayAutoPayWebhookView, AutoPayVerifyPaymentView,ForgotPasswordView,PasswordResetConfirmView
 )
 
 
@@ -54,4 +54,9 @@ urlpatterns = [
     path('autopay/cancel/', CancelAutoPayView.as_view(), name='autopay-cancel'),
     path('autopay/webhook/', RazorpayAutoPayWebhookView.as_view(), name='autopay-webhook'),
     path('autopay/verify-payment/', AutoPayVerifyPaymentView.as_view(), name='autopay-verify-payment'),
+
+        #Forget Password
+    path('auth/password/reset/', ForgotPasswordView.as_view(), name='forgot-password'),
+    path('auth/password/reset/confirm/<uidb64>/<token>/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
+
 ]

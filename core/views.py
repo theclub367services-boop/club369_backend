@@ -1,4 +1,5 @@
 from django.contrib.auth import login, logout
+from django.contrib.auth.hashers import check_password
 from rest_framework import status, generics, permissions, views
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
@@ -211,7 +212,7 @@ class CreateRazorpayOrderView(views.APIView):
                 "errors": "autopay_active"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = 1 * 100  # 4999 * 100
+        amount = 4999 * 100 
         
         order_data = {
             'amount': amount,
@@ -503,7 +504,7 @@ class AdminMarkAsPaidView(views.APIView):
             membership = Membership.objects.create(
                 user=target_user,
                 plan_name='Manual Admin Activation',
-                amount=1.00,  # 4999.00
+                amount=4999.00,  # Ensure correct mount
                 start_date=start_date,
                 end_date=add_one_month(start_date),
                 status='ACTIVE'
@@ -512,7 +513,7 @@ class AdminMarkAsPaidView(views.APIView):
             payment = Payment.objects.create(
                 user=target_user,
                 membership=membership,
-                amount=1.00, # 4999.00
+                amount=4999.00,
                 payment_mode='MANUAL',
                 transaction_id=f'MANUAL_{target_user.id}_{int(time.time())}',
                 payment_status='SUCCESS',
@@ -522,7 +523,7 @@ class AdminMarkAsPaidView(views.APIView):
             TransactionLedger.objects.create(
                 payment=payment,
                 user=target_user,
-                amount=1.00, # 4999.00
+                amount=4999.00,
                 transaction_type='CREDIT',
                 description=f"Admin manual payment collection. User: {target_user.email}"
             )
@@ -665,7 +666,7 @@ class AdminMarkAsPaidView(views.APIView):
         if existing_autopay:
             return Response({'error': 'AutoPay is active. Manual renewal not allowed.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = request.data.get('amount', 1.00) # 4999.00
+        amount = request.data.get('amount', 4999.00)
         
         current_date = timezone.now().date()
         existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
@@ -787,13 +788,13 @@ class ForgotPasswordView(views.APIView):
         email = request.data.get('email')
         user = User.objects.filter(email=email).first()
         
-        # We always return success to prevent email enumeration (security best practice)
+        # If user exists, send password link
         if user:
             token = default_token_generator.make_token(user)
             uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
             
-            # This link points to your React frontend route
-            reset_url = f"{settings.FRONTEND_URL}/password-reset/{uidb64}/{token}"
+            # This link points to your React frontend route (using HashRouter #/)
+            reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/#/password-reset/{uidb64}/{token}"
             
             send_mail(
                 subject='Password Reset Request - CLUB369',
@@ -803,7 +804,9 @@ class ForgotPasswordView(views.APIView):
                 fail_silently=False,
             )
         
-        return Response({"message": "If an account matches this email, a reset link has been sent."}, status=status.HTTP_200_OK)
+            return Response({"message": "A reset link has been sent to your email address."}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "User with this mail ID not exists"}, status=status.HTTP_404_NOT_FOUND)
 
 class PasswordResetConfirmView(views.APIView):
     permission_classes = [permissions.AllowAny]
@@ -817,12 +820,15 @@ class PasswordResetConfirmView(views.APIView):
 
         if user and default_token_generator.check_token(user, token):
             new_password = request.data.get('password')
+            if check_password(new_password, user.password):
+                return Response({"error": "New password cannot be similar to the old passwords"}, status=status.HTTP_400_BAD_REQUEST)
             user.set_password(new_password)
             user.save()
+            default_token_generator.delete(user, token)
             return Response({"message": "Password updated successfully!"}, status=status.HTTP_200_OK)
         
-        return Response({"error": "This link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
-
+        return Response({"error": "The password reset link is invalid, malformed, or has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+  
 # --- AutoPay Subscriptions MVP ---
 
 
@@ -837,7 +843,7 @@ class EnableAutoPayView(views.APIView):
             return Response({'error': 'AutoPay is already enabled'}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1. Create Razorpay Plan if needed, or assume you have a base PLAN_ID
-        # Hardcoding generic subscription details for MVP based on 1.00 testing monthly (was 4999.00)
+        # Hardcoding generic subscription details for MVP based on 4999 monthly
         # Note: You need a real plan_id from your Razorpay Dashboard in production.
         PLAN_ID = os.getenv('RAZORPAY_AUTOPAY_PLAN_ID') 
         if not PLAN_ID:
@@ -934,7 +940,7 @@ class AutoPayVerifyPaymentView(views.APIView):
             pmt = client.payment.fetch(payment_id)
             amount = pmt.get('amount', 0) / 100
         except Exception:
-            amount = 1.00 # fallback
+            amount = 4999.00 # fallback
 
         with transaction.atomic():
             sub.autopay_status = 'ENABLED'
