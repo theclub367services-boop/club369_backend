@@ -193,6 +193,24 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         # stateless JWT authentication only contains id, email, and role.
         return User.objects.get(id=self.request.user.id)
 
+class VerifySessionView(views.APIView):
+    """
+    Stateless Heartbeat:
+    Verifies the JWT is valid without hitting the database.
+    Used for background liveness checks.
+    """
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get(self, request):
+        return Response({
+            "success": True,
+            "message": "Session is active",
+            "data": {
+                "user_id": request.user.id,
+                "role": getattr(request.user, 'role', 'USER')
+            }
+        }, status=status.HTTP_200_OK)
+
 # --- Membership & Payments ---
 
 client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))

@@ -7,7 +7,8 @@ from .views import (
     AdminVoucherListView, AdminVoucherCreateView, AdminVoucherDeleteView, AdminVoucherToggleView,
     AdminUserDeleteView, CreateRazorpayOrderView, VerifyPaymentView, RazorpayWebhookView,
     GetUploadSignatureView, SaveProfilePicView, AdminMarkAsPaidView,
-    EnableAutoPayView, CancelAutoPayView, RazorpayAutoPayWebhookView, AutoPayVerifyPaymentView,ForgotPasswordView,PasswordResetConfirmView
+    EnableAutoPayView, CancelAutoPayView, RazorpayAutoPayWebhookView, AutoPayVerifyPaymentView,ForgotPasswordView,PasswordResetConfirmView,
+    VerifySessionView
 )
 
 
@@ -18,6 +19,7 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='logout'),
     path('auth/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),
     path('auth/me/', UserProfileView.as_view(), name='me'),
+    path('auth/verify-session/', VerifySessionView.as_view(), name='verify-session'),
 
     # Membership & Payment
     path('payments/webhook/', RazorpayWebhookView.as_view(), name='razorpay-webhook'),
