@@ -1,6 +1,10 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.utils import timezone
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+import cloudinary.uploader
+import os
 
 class UserManager(BaseUserManager):
     def create_user(self, email, phone, full_name, password=None, **extra_fields):
@@ -191,3 +195,18 @@ class AutoPaySubscription(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.razorpay_subscription_id} - {self.autopay_status}"
+
+@receiver(post_delete, sender=User)
+def delete_user_cloudinary_assets(sender, instance, **kwargs):
+    """
+    Ensures that when a User is deleted, their profile picture 
+    is also removed from Cloudinary to save storage space.
+    """
+    if instance.profile_pic_public_id:
+        try:
+            cloudinary.uploader.destroy(instance.profile_pic_public_id)
+        except Exception as e:
+            # Log error but don't block deletion
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to delete Cloudinary asset for user {instance.id}: {str(e)}")
