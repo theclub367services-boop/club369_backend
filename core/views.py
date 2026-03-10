@@ -230,7 +230,7 @@ class CreateRazorpayOrderView(views.APIView):
                 "errors": "autopay_active"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = 4999 * 100 
+        amount = 5000 * 100  # Amount in paise (₹5000)
         
         order_data = {
             'amount': amount,
@@ -522,7 +522,7 @@ class AdminMarkAsPaidView(views.APIView):
             membership = Membership.objects.create(
                 user=target_user,
                 plan_name='Manual Admin Activation',
-                amount=4999.00,  # Ensure correct mount
+                amount=5000.00,  # Ensure correct mount
                 start_date=start_date,
                 end_date=add_one_month(start_date),
                 status='ACTIVE'
@@ -531,7 +531,7 @@ class AdminMarkAsPaidView(views.APIView):
             payment = Payment.objects.create(
                 user=target_user,
                 membership=membership,
-                amount=4999.00,
+                amount=5000.00,
                 payment_mode='MANUAL',
                 transaction_id=f'MANUAL_{target_user.id}_{int(time.time())}',
                 payment_status='SUCCESS',
@@ -541,7 +541,7 @@ class AdminMarkAsPaidView(views.APIView):
             TransactionLedger.objects.create(
                 payment=payment,
                 user=target_user,
-                amount=4999.00,
+                amount=5000.00,
                 transaction_type='CREDIT',
                 description=f"Admin manual payment collection. User: {target_user.email}"
             )
@@ -684,7 +684,7 @@ class AdminMarkAsPaidView(views.APIView):
         if existing_autopay:
             return Response({'error': 'AutoPay is active. Manual renewal not allowed.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = request.data.get('amount', 4999.00)
+        amount = request.data.get('amount', 5000.00)
         
         current_date = timezone.now().date()
         existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
@@ -861,7 +861,7 @@ class EnableAutoPayView(views.APIView):
             return Response({'error': 'AutoPay is already enabled'}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1. Create Razorpay Plan if needed, or assume you have a base PLAN_ID
-        # Hardcoding generic subscription details for MVP based on 4999 monthly
+        # Hardcoding generic subscription details for MVP based on 5000 monthly
         # Note: You need a real plan_id from your Razorpay Dashboard in production.
         PLAN_ID = os.getenv('RAZORPAY_AUTOPAY_PLAN_ID') 
         if not PLAN_ID:
@@ -958,7 +958,7 @@ class AutoPayVerifyPaymentView(views.APIView):
             pmt = client.payment.fetch(payment_id)
             amount = pmt.get('amount', 0) / 100
         except Exception:
-            amount = 4999.00 # fallback
+            amount = 5000.00 # fallback
 
         with transaction.atomic():
             sub.autopay_status = 'ENABLED'
