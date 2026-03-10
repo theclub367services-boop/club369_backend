@@ -184,6 +184,31 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = (permissions.AllowAny,)
     serializer_class = RegisterSerializer
 
+    def create(self, request, *args, **kwargs):
+        email = request.data.get('email')
+        phone = request.data.get('phone')
+
+        email_exists = User.objects.filter(email=email).exists() if email else False
+        phone_exists = User.objects.filter(phone=phone).exists() if phone else False
+
+        if email_exists and phone_exists:
+            return Response(
+                {"error": "The User with provided Mail Id and Phone number Already Exists use a different Mail Id and Phone number"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        elif email_exists:
+            return Response(
+                {"error": "The User with provided Mail Id Already Exists use a different Mail Id"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        elif phone_exists:
+            return Response(
+                {"error": "The User with provided Phone number Already Exists use a different Phone number"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return super().create(request, *args, **kwargs)
+
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
     permission_classes = (permissions.IsAuthenticated,)
