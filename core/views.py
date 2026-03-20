@@ -716,10 +716,11 @@ class AdminVentureListView(generics.ListCreateAPIView):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        venture = serializer.save()
+        # Prevent Django from saving files to local storage by removing them from validated_data
+        poster_file = serializer.validated_data.pop('poster', None)
+        icon_file = serializer.validated_data.pop('icon', None)
         
-        poster_file = self.request.FILES.get('poster')
-        icon_file = self.request.FILES.get('icon')
+        venture = serializer.save()
         
         if poster_file:
             try:
@@ -772,10 +773,11 @@ class AdminVentureDetailView(generics.RetrieveUpdateAPIView):
 
     @transaction.atomic
     def perform_update(self, serializer):
-        venture = serializer.save()
+        # Prevent Django from saving files to local storage by removing them from validated_data
+        poster_file = serializer.validated_data.pop('poster', None)
+        icon_file = serializer.validated_data.pop('icon', None)
         
-        poster_file = self.request.FILES.get('poster')
-        icon_file = self.request.FILES.get('icon')
+        venture = serializer.save()
         
         if poster_file:
             if venture.poster_public_id:
