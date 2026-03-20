@@ -49,8 +49,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-    # UNUSED (identified by static analysis - safe to remove later)
-    # updated_at = models.DateTimeField(auto_now=True)
 
     objects = UserManager()
 
@@ -118,37 +116,48 @@ class TransactionLedger(models.Model):
     transaction_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
 
-class Voucher(models.Model):
-    voucher_code = models.CharField(max_length=50, unique=True)
-    voucher_name = models.CharField(max_length=100)
-    description = models.TextField()
-    max_usage_per_user = models.PositiveIntegerField(default=1)
-    valid_from = models.DateTimeField()
-    valid_until = models.DateTimeField()
-    is_active = models.BooleanField(default=True)
+class Venture(models.Model):
+    TYPE_CHOICES = (
+        ('OWN', 'Own'),
+        ('PARTNER', 'Partner'),
+    )
+    STATUS_CHOICES = (
+        ('ACTIVE', 'Active'),
+        ('SUSPENDED', 'Suspended'),
+    )
+    name = models.CharField(max_length=255)
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='OWN')
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2)
+    poster = models.ImageField(upload_to='ventures/posters/', null=True, blank=True)
+    poster_public_id = models.CharField(max_length=255, null=True, blank=True)
+    icon = models.ImageField(upload_to='ventures/icons/', null=True, blank=True)
+    icon_public_id = models.CharField(max_length=255, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='ACTIVE')
+    is_deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
-class UserVoucher(models.Model):
-    STATUS_CHOICES = (
-        ('CLAIMED', 'Claimed'),
-        ('USED', 'Used'),
-    )
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_vouchers')
-    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='user_vouchers')
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='CLAIMED')
-    claimed_at = models.DateTimeField(auto_now_add=True)
-    used_at = models.DateTimeField(null=True, blank=True)
+    def __str__(self):
+        return self.name
 
-    class Meta:
-        unique_together = ('user', 'voucher')
+class Branch(models.Model):
+    venture = models.ForeignKey(Venture, on_delete=models.CASCADE, related_name='branches')
+    branch_name = models.CharField(max_length=255)
 
-# UNUSED MODEL - candidate for deletion
-# class AdminActivityLog(models.Model):
-#     admin = models.ForeignKey(User, on_delete=models.CASCADE, related_name='admin_logs')
-#     action = models.CharField(max_length=255)
-#     target_id = models.CharField(max_length=100, null=True, blank=True)
-#     remarks = models.TextField(null=True, blank=True)
-#     created_at = models.DateTimeField(auto_now_add=True)
+    def __str__(self):
+        return f"{self.venture.name} - {self.branch_name}"
+
+class Redemption(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='redemptions')
+    venture = models.ForeignKey(Venture, on_delete=models.CASCADE, related_name='redemptions')
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='redemptions')
+    actual_bill_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    final_paid_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    redeemed_at = models.DateField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.venture.name} - {self.final_paid_amount}"
+
 
 import uuid
 
@@ -187,11 +196,7 @@ class AutoPaySubscription(models.Model):
     autopay_status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='ENABLED')
     current_cycle_status = models.CharField(max_length=15, choices=CYCLE_STATUS_CHOICES, default='UNPAID')
     last_payment_date = models.DateTimeField(null=True, blank=True)
-    # UNUSED (identified by static analysis - safe to remove later)
-    # next_billing_date = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    # UNUSED (identified by static analysis - safe to remove later)
-    # updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.user.email} - {self.razorpay_subscription_id} - {self.autopay_status}"

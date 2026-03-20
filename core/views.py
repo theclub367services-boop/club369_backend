@@ -10,8 +10,8 @@ from django.utils import timezone
 from datetime import timedelta
 from django.db import transaction
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, Membership, Payment, TransactionLedger, Voucher, UserVoucher, PaymentOrder, AutoPaySubscription, UserSession
-from .serializers import (UserSerializer, RegisterSerializer,  MembershipSerializer, PaymentSerializer, TransactionLedgerSerializer, VoucherSerializer, UserVoucherSerializer, MembershipDetailSerializer, AdminVoucherSerializer,CustomTokenObtainPairSerializer)
+from .models import User, Membership, Payment, TransactionLedger, PaymentOrder, AutoPaySubscription, UserSession, Venture, Branch, Redemption
+from .serializers import (UserSerializer, RegisterSerializer, MembershipSerializer, PaymentSerializer, TransactionLedgerSerializer, MembershipDetailSerializer, CustomTokenObtainPairSerializer, VentureSerializer, BranchSerializer, RedemptionSerializer, AdminVentureSerializer)
 from django.conf import settings
 import os
 import razorpay
@@ -580,27 +580,68 @@ class AdminMarkAsPaidView(views.APIView):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
 # --- Vouchers ---
-class VoucherListView(generics.ListAPIView):
-    queryset = Voucher.objects.filter(is_active=True)
-    serializer_class = VoucherSerializer
+class VentureListView(generics.ListAPIView):
+    serializer_class = VentureSerializer
     permission_classes = (permissions.IsAuthenticated,)
 
-class ClaimVoucherView(views.APIView):
+    def get_queryset(self):
+        return Venture.objects.filter(status='ACTIVE', is_deleted=False).prefetch_related('branches').order_by('name')
+
+class RedeemVoucherAPIView(views.APIView):
     permission_classes = (permissions.IsAuthenticated,)
 
-    def post(self, request, voucher_id):
+    @transaction.atomic
+    def post(self, request):
+        user = request.user
+        venture_id = request.data.get('venture_id')
+        branch_id = request.data.get('branch_id')
+        bill_amount = request.data.get('bill_amount')
+        
+        if venture_id is None or branch_id is None or bill_amount is None:
+            return Response({'error': 'venture_id, branch_id and bill_amount are required'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            voucher = Voucher.objects.get(id=voucher_id, is_active=True)
-            
-            # Check if already claimed
-            if UserVoucher.objects.filter(user=request.user, voucher=voucher).exists():
-                return Response({'error': 'Voucher already claimed'}, status=status.HTTP_400_BAD_REQUEST)
+            from decimal import Decimal
+            bill_amount_decimal = Decimal(str(bill_amount))
+        except:
+            return Response({'error': 'Invalid bill_amount'}, status=status.HTTP_400_BAD_REQUEST)
 
-            UserVoucher.objects.create(user=request.user, voucher=voucher)
-            serializer = VoucherSerializer(voucher, context={'request': request})
-            return Response(serializer.data)
-        except Voucher.DoesNotExist:
-            return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            venture = Venture.objects.get(id=venture_id, status='ACTIVE', is_deleted=False)
+        except Venture.DoesNotExist:
+            return Response({'error': 'Venture not found or not active'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            branch = Branch.objects.get(id=branch_id, venture=venture)
+        except Branch.DoesNotExist:
+            return Response({'error': 'Branch not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if venture.type == 'OWN':
+            now = timezone.now()
+            start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            if Redemption.objects.filter(user=user, venture=venture, redeemed_at__gte=start_of_month).exists():
+                return Response({'error': 'Already redeemed this month'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from decimal import Decimal
+        discount_amount = bill_amount_decimal * (venture.discount_percentage / Decimal('100.0'))
+        final_paid_amount = bill_amount_decimal - discount_amount
+
+        redemption = Redemption.objects.create(
+            user=user,
+            venture=venture,
+            branch=branch,
+            actual_bill_amount=bill_amount_decimal,
+            discount_amount=discount_amount,
+            final_paid_amount=final_paid_amount
+        )
+
+        return Response({
+            'actual_bill_amount': redemption.actual_bill_amount,
+            'discount_amount': redemption.discount_amount,
+            'final_paid_amount': redemption.final_paid_amount,
+            'branch_name': branch.branch_name,
+            'redeemed_date': redemption.redeemed_at.strftime('%Y-%m-%d')
+        }, status=status.HTTP_201_CREATED)
 
 # --- Admin Dashboards ---
 
@@ -655,44 +696,257 @@ class AdminCollectionsView(views.APIView):
         
         return Response({'total_last_30_days': total})
 
-class AdminVoucherListView(generics.ListAPIView):
-    queryset = Voucher.objects.all().order_by('-created_at')
-    serializer_class = AdminVoucherSerializer
+from django.db.models import Q, Sum
+import csv
+from django.http import HttpResponse
+
+class AdminVentureListView(generics.ListCreateAPIView):
+    serializer_class = AdminVentureSerializer
     permission_classes = (permissions.IsAdminUser,)
 
-class AdminVoucherCreateView(generics.CreateAPIView):
-    queryset = Voucher.objects.all()
-    serializer_class = AdminVoucherSerializer
-    permission_classes = (permissions.IsAdminUser,)
+    def get_queryset(self):
+        queryset = Venture.objects.filter(is_deleted=False).order_by('-created_at')
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) | 
+                Q(branches__branch_name__icontains=search)
+            ).distinct()
+        return queryset
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        # Default valid_from to now if not provided
-        if 'valid_from' not in serializer.validated_data:
-            serializer.save(valid_from=timezone.now())
-        else:
-            serializer.save()
+        venture = serializer.save()
+        
+        poster_file = self.request.FILES.get('poster')
+        icon_file = self.request.FILES.get('icon')
+        
+        if poster_file:
+            try:
+                res = cloudinary.uploader.upload(
+                    poster_file, 
+                    folder="club369/ventures",
+                    quality="auto",
+                    fetch_format="auto"
+                )
+                venture.poster = res.get('secure_url')
+                venture.poster_public_id = res.get('public_id')
+            except Exception as e:
+                logger.error(f"Cloudinary poster upload failed: {e}")
+                
+        if icon_file:
+            try:
+                res = cloudinary.uploader.upload(
+                    icon_file, 
+                    folder="club369/ventures",
+                    quality="auto",
+                    fetch_format="auto"
+                )
+                venture.icon = res.get('secure_url')
+                venture.icon_public_id = res.get('public_id')
+            except Exception as e:
+                logger.error(f"Cloudinary icon upload failed: {e}")
+                
+        if poster_file or icon_file:
+            venture.save()
 
-class AdminVoucherToggleView(views.APIView):
+        # Handle branches if provided as JSON string
+        raw_branches = self.request.data.get('branches', '[]')
+        if isinstance(raw_branches, str):
+            import json
+            try:
+                branches_data = json.loads(raw_branches)
+            except:
+                branches_data = []
+        else:
+            branches_data = raw_branches
+            
+        for b_name in branches_data:
+            if b_name and isinstance(b_name, str):
+                Branch.objects.create(venture=venture, branch_name=b_name.strip())
+
+class AdminVentureDetailView(generics.RetrieveUpdateAPIView):
+    serializer_class = AdminVentureSerializer
+    permission_classes = (permissions.IsAdminUser,)
+    queryset = Venture.objects.filter(is_deleted=False)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        venture = serializer.save()
+        
+        poster_file = self.request.FILES.get('poster')
+        icon_file = self.request.FILES.get('icon')
+        
+        if poster_file:
+            if venture.poster_public_id:
+                try:
+                    cloudinary.uploader.destroy(venture.poster_public_id)
+                except Exception as e:
+                    logger.error(f"Cloudinary poster deletion failed: {e}")
+            try:
+                res = cloudinary.uploader.upload(
+                    poster_file, 
+                    folder="club369/ventures",
+                    quality="auto",
+                    fetch_format="auto"
+                )
+                venture.poster = res.get('secure_url')
+                venture.poster_public_id = res.get('public_id')
+            except Exception as e:
+                logger.error(f"Cloudinary poster upload failed: {e}")
+                
+        if icon_file:
+            if venture.icon_public_id:
+                try:
+                    cloudinary.uploader.destroy(venture.icon_public_id)
+                except Exception as e:
+                    logger.error(f"Cloudinary icon deletion failed: {e}")
+            try:
+                res = cloudinary.uploader.upload(
+                    icon_file, 
+                    folder="club369/ventures",
+                    quality="auto",
+                    fetch_format="auto"
+                )
+                venture.icon = res.get('secure_url')
+                venture.icon_public_id = res.get('public_id')
+            except Exception as e:
+                logger.error(f"Cloudinary icon upload failed: {e}")
+                
+        if poster_file or icon_file:
+            venture.save()
+
+        if 'branches' in self.request.data:
+            raw_branches = self.request.data.get('branches', '[]')
+            if isinstance(raw_branches, str):
+                import json
+                try:
+                    branches_data = json.loads(raw_branches)
+                except:
+                    branches_data = [] # Invalid JSON
+            else:
+                branches_data = raw_branches
+                
+            Branch.objects.filter(venture=venture).delete()
+            for b_name in branches_data:
+                if b_name and isinstance(b_name, str):
+                    Branch.objects.create(venture=venture, branch_name=b_name.strip())
+
+class AdminVentureToggleView(views.APIView):
     permission_classes = (permissions.IsAdminUser,)
 
     def patch(self, request, pk):
         try:
-            voucher = Voucher.objects.get(pk=pk)
-            voucher.is_active = not voucher.is_active
-            voucher.save()
-            return Response({'status': 'Voucher status updated', 'is_active': voucher.is_active})
-        except Voucher.DoesNotExist:
-            return Response({'error': 'Voucher not found'}, status=status.HTTP_404_NOT_NOT_FOUND)
-class AdminVoucherDeleteView(views.APIView):
+            venture = Venture.objects.get(pk=pk, is_deleted=False)
+            venture.status = 'SUSPENDED' if venture.status == 'ACTIVE' else 'ACTIVE'
+            venture.save()
+            return Response({'status': 'Venture status updated', 'current_status': venture.status})
+        except Venture.DoesNotExist:
+            return Response({'error': 'Venture not found'}, status=status.HTTP_404_NOT_FOUND)
+
+class AdminVentureDeleteView(views.APIView):
     permission_classes = (permissions.IsAdminUser,)
 
     def delete(self, request, pk):
         try:
-            voucher = Voucher.objects.get(pk=pk)
-            voucher.delete()
-            return Response({'status': 'Voucher deleted'})
-        except Voucher.DoesNotExist:
-            return Response({'error': 'Voucher not found'}, status=404)
+            venture = Venture.objects.get(pk=pk, is_deleted=False)
+            venture.is_deleted = True
+            venture.save()
+            return Response({'status': 'Venture deleted'})
+        except Venture.DoesNotExist:
+            return Response({'error': 'Venture not found'}, status=404)
+
+class AdminRedemptionReportView(generics.ListAPIView):
+    serializer_class = RedemptionSerializer
+    permission_classes = (permissions.IsAdminUser,)
+
+    def get_queryset(self):
+        queryset = Redemption.objects.all().order_by('-redeemed_at')
+        scope = self.request.query_params.get('scope', 'all')
+        
+        now = timezone.now()
+        if scope == 'current_month':
+            start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            queryset = queryset.filter(redeemed_at__gte=start_of_month)
+        elif scope == 'custom':
+            from_date = self.request.query_params.get('from_date')
+            to_date = self.request.query_params.get('to_date')
+            if from_date:
+                queryset = queryset.filter(redeemed_at__gte=from_date)
+            if to_date:
+                queryset = queryset.filter(redeemed_at__lte=to_date)
+                
+        branch_id = self.request.query_params.get('branch_id')
+        if branch_id:
+            queryset = queryset.filter(branch_id=branch_id)
+            
+        venture_id = self.request.query_params.get('venture_id')
+        if venture_id:
+            queryset = queryset.filter(venture_id=venture_id)
+            
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        if request.query_params.get('export') == 'excel':
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = 'attachment; filename="redemptions.csv"'
+            writer = csv.writer(response)
+            writer.writerow(['S.No', 'User Name', 'Branch Name', 'Actual Bill Amount', 'Discount Amount', 'Final Paid Amount', 'Redeemed Date'])
+            
+            total_bill = 0
+            total_discount = 0
+            total_final = 0
+            
+            for idx, r in enumerate(queryset, 1):
+                writer.writerow([
+                    idx,
+                    r.user.full_name,
+                    r.branch.branch_name,
+                    r.actual_bill_amount,
+                    r.discount_amount,
+                    r.final_paid_amount,
+                    r.redeemed_at.strftime('%Y-%m-%d') if r.redeemed_at else ''
+                ])
+                total_bill += r.actual_bill_amount
+                total_discount += r.discount_amount
+                total_final += r.final_paid_amount
+                
+            writer.writerow(['TOTAL', '', '', str(total_bill), str(total_discount), str(total_final), ''])
+            return response
+            
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            response = self.get_paginated_response(serializer.data)
+            
+            totals = queryset.aggregate(
+                total_bill=Sum('actual_bill_amount'),
+                total_discount=Sum('discount_amount'),
+                total_collected=Sum('final_paid_amount')
+            )
+            response.data['totals'] = {
+                'total_bill': totals['total_bill'] or 0,
+                'total_discount': totals['total_discount'] or 0,
+                'total_collected': totals['total_collected'] or 0,
+            }
+            return response
+
+        serializer = self.get_serializer(queryset, many=True)
+        totals = queryset.aggregate(
+            total_bill=Sum('actual_bill_amount'),
+            total_discount=Sum('discount_amount'),
+            total_collected=Sum('final_paid_amount')
+        )
+        return Response({
+            'results': serializer.data,
+            'totals': {
+                'total_bill': totals['total_bill'] or 0,
+                'total_discount': totals['total_discount'] or 0,
+                'total_collected': totals['total_collected'] or 0,
+            }
+        })
 
 class AdminMarkAsPaidView(views.APIView):
     permission_classes = (permissions.IsAdminUser,)
@@ -867,7 +1121,7 @@ class PasswordResetConfirmView(views.APIView):
                 return Response({"error": "New password cannot be similar to the old passwords"}, status=status.HTTP_400_BAD_REQUEST)
             user.set_password(new_password)
             user.save()
-            default_token_generator.delete(user, token)
+            # default_token_generator.delete(user, token)
             return Response({"message": "Password updated successfully!"}, status=status.HTTP_200_OK)
         
         return Response({"error": "The password reset link is invalid, malformed, or has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Membership, Payment, TransactionLedger, Voucher, UserVoucher
+from .models import User, Membership, Payment, TransactionLedger, Venture, Branch, Redemption
 import base64
 import uuid
 from django.core.files.base import ContentFile
@@ -176,60 +176,38 @@ class TransactionLedgerSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         return 'success' if obj.payment and obj.payment.payment_status == 'SUCCESS' else 'failed'
 
-class VoucherSerializer(serializers.ModelSerializer):
-    title = serializers.CharField(source='voucher_name')
-    isClaimed = serializers.SerializerMethodField()
-    code = serializers.SerializerMethodField()
+class BranchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Branch
+        fields = ('id', 'venture', 'branch_name')
+
+class VentureSerializer(serializers.ModelSerializer):
+    branches = BranchSerializer(many=True, read_only=True)
+    class Meta:
+        model = Venture
+        fields = ('id', 'name', 'type', 'discount_percentage', 'poster', 'icon', 'status', 'branches')
+
+class RedemptionSerializer(serializers.ModelSerializer):
+    venture_name = serializers.CharField(source='venture.name', read_only=True)
+    branch_name = serializers.CharField(source='branch.branch_name', read_only=True)
+    user_name = serializers.CharField(source='user.full_name', read_only=True)
 
     class Meta:
-        model = Voucher
-        fields = ('id', 'title', 'description', 'isClaimed', 'code')
+        model = Redemption
+        fields = ('id', 'user', 'user_name', 'venture', 'venture_name', 'branch', 'branch_name', 
+                  'actual_bill_amount', 'discount_amount', 'final_paid_amount', 'redeemed_at')
 
-    def get_isClaimed(self, obj):
-        user = self.context.get('request').user if 'request' in self.context else None
-        if user and user.is_authenticated:
-            return UserVoucher.objects.filter(user=user, voucher=obj).exists()
-        return False
-
-    def get_code(self, obj):
-        user = self.context.get('request').user if 'request' in self.context else None
-        if user and user.is_authenticated:
-            if UserVoucher.objects.filter(user=user, voucher=obj).exists():
-                return obj.voucher_code
-        return "********"
-
-class UserVoucherSerializer(serializers.ModelSerializer):
-    voucher_details = VoucherSerializer(source='voucher', read_only=True)
+class AdminVentureSerializer(serializers.ModelSerializer):
+    branches = serializers.SerializerMethodField()
+    branch_count = serializers.SerializerMethodField()
+    
     class Meta:
-        model = UserVoucher
-        fields = ('id', 'user', 'voucher', 'voucher_details', 'status', 'claimed_at', 'used_at')
+        model = Venture
+        fields = ('id', 'name', 'type', 'discount_percentage', 'poster', 'poster_public_id', 'icon', 'icon_public_id', 'status', 'is_deleted', 'branches', 'branch_count')
 
-# UNUSED SERIALIZER - candidate for deletion
-# class AdminActivityLogSerializer(serializers.ModelSerializer):
-#     admin_name = serializers.CharField(source='admin.full_name', read_only=True)
-#     class Meta:
-#         model = AdminActivityLog
-#         fields = '__all__'
+    def get_branches(self, obj):
+        return BranchSerializer(obj.branches.all(), many=True).data
 
-
-class AdminVoucherSerializer(serializers.ModelSerializer):
-    title = serializers.CharField(source='voucher_name')
-    usageCount = serializers.SerializerMethodField()
-    usedBy = serializers.SerializerMethodField()
-    expiryDate = serializers.DateTimeField(source='valid_until')
-    code = serializers.CharField(source='voucher_code')
-    isSuspended = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Voucher
-        fields = ('id', 'title', 'code', 'description', 'max_usage_per_user', 'valid_from', 'expiryDate', 'isSuspended', 'usageCount', 'usedBy')
-
-    def get_usageCount(self, obj):
-        return obj.user_vouchers.count()
-
-    def get_usedBy(self, obj):
-        return [uv.user.full_name for uv in obj.user_vouchers.all()]
-
-    def get_isSuspended(self, obj):
-        return not obj.is_active
+    def get_branch_count(self, obj):
+        return obj.branches.count()
 
