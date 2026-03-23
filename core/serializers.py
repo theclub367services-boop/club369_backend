@@ -183,16 +183,11 @@ class BranchSerializer(serializers.ModelSerializer):
 
 class VentureSerializer(serializers.ModelSerializer):
     branches = BranchSerializer(many=True, read_only=True)
-    poster = serializers.SerializerMethodField()
     icon = serializers.SerializerMethodField()
     
     class Meta:
         model = Venture
-        fields = ('id', 'name', 'type', 'discount_percentage', 'poster', 'icon', 'status', 'branches')
-
-    def get_poster(self, obj):
-        if not obj.poster: return None
-        return obj.poster.name if obj.poster.name.startswith('http') else obj.poster.url
+        fields = ('id', 'name', 'type', 'discount_percentage', 'icon', 'status', 'branches')
 
     def get_icon(self, obj):
         if not obj.icon: return None
@@ -211,16 +206,11 @@ class RedemptionSerializer(serializers.ModelSerializer):
 class AdminVentureSerializer(serializers.ModelSerializer):
     branches = serializers.SerializerMethodField()
     branch_count = serializers.SerializerMethodField()
-    poster = serializers.SerializerMethodField()
     icon = serializers.SerializerMethodField()
     
     class Meta:
         model = Venture
-        fields = ('id', 'name', 'type', 'discount_percentage', 'poster', 'poster_public_id', 'icon', 'icon_public_id', 'status', 'is_deleted', 'branches', 'branch_count')
-
-    def get_poster(self, obj):
-        if not obj.poster: return None
-        return obj.poster.name if obj.poster.name.startswith('http') else obj.poster.url
+        fields = ('id', 'name', 'type', 'discount_percentage', 'icon', 'icon_public_id', 'status', 'is_deleted', 'branches', 'branch_count')
 
     def get_icon(self, obj):
         if not obj.icon: return None

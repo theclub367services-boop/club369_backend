@@ -128,8 +128,6 @@ class Venture(models.Model):
     name = models.CharField(max_length=255)
     type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='OWN')
     discount_percentage = models.DecimalField(max_digits=5, decimal_places=2)
-    poster = models.ImageField(upload_to='ventures/posters/', max_length=500, null=True, blank=True)
-    poster_public_id = models.CharField(max_length=255, null=True, blank=True)
     icon = models.ImageField(upload_to='ventures/icons/', max_length=500, null=True, blank=True)
     icon_public_id = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='ACTIVE')

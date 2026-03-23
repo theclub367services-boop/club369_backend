@@ -719,22 +719,8 @@ class AdminVentureListView(generics.ListCreateAPIView):
         venture = serializer.save()
         
         # Get files from request.FILES directly since SerializerMethodField is read-only
-        poster_file = self.request.FILES.get('poster')
         icon_file = self.request.FILES.get('icon')
         
-        if poster_file:
-            try:
-                res = cloudinary.uploader.upload(
-                    poster_file, 
-                    folder="club369/ventures",
-                    quality="auto",
-                    fetch_format="auto"
-                )
-                venture.poster = res.get('secure_url')
-                venture.poster_public_id = res.get('public_id')
-            except Exception as e:
-                logger.error(f"Cloudinary poster upload failed: {e}")
-                
         if icon_file:
             try:
                 res = cloudinary.uploader.upload(
@@ -748,7 +734,7 @@ class AdminVentureListView(generics.ListCreateAPIView):
             except Exception as e:
                 logger.error(f"Cloudinary icon upload failed: {e}")
                 
-        if poster_file or icon_file:
+        if icon_file:
             venture.save()
 
         # Handle branches if provided as JSON string
@@ -776,27 +762,8 @@ class AdminVentureDetailView(generics.RetrieveUpdateAPIView):
         venture = serializer.save()
         
         # Get files from request.FILES directly since SerializerMethodField is read-only
-        poster_file = self.request.FILES.get('poster')
         icon_file = self.request.FILES.get('icon')
         
-        if poster_file:
-            if venture.poster_public_id:
-                try:
-                    cloudinary.uploader.destroy(venture.poster_public_id)
-                except Exception as e:
-                    logger.error(f"Cloudinary poster deletion failed: {e}")
-            try:
-                res = cloudinary.uploader.upload(
-                    poster_file, 
-                    folder="club369/ventures",
-                    quality="auto",
-                    fetch_format="auto"
-                )
-                venture.poster = res.get('secure_url')
-                venture.poster_public_id = res.get('public_id')
-            except Exception as e:
-                logger.error(f"Cloudinary poster upload failed: {e}")
-                
         if icon_file:
             if venture.icon_public_id:
                 try:
@@ -815,7 +782,7 @@ class AdminVentureDetailView(generics.RetrieveUpdateAPIView):
             except Exception as e:
                 logger.error(f"Cloudinary icon upload failed: {e}")
                 
-        if poster_file or icon_file:
+        if icon_file:
             venture.save()
 
         if 'branches' in self.request.data:
