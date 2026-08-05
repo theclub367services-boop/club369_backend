@@ -41,10 +41,11 @@ class UserSerializer(serializers.ModelSerializer):
     last_payment_date = serializers.SerializerMethodField()
     membership_end_date = serializers.SerializerMethodField()
     autopay_status = serializers.SerializerMethodField()
+    total_amount_paid = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'name', 'email', 'mobile', 'profile_picture', 'profile_pic', 'profile_pic_public_id', 'role', 'status', 'created_at', 'membership_status', 'last_payment_date', 'membership_end_date', 'autopay_status')
+        fields = ('id', 'name', 'email', 'mobile', 'profile_picture', 'profile_pic', 'profile_pic_public_id', 'role', 'status', 'created_at', 'membership_status', 'last_payment_date', 'membership_end_date', 'autopay_status', 'total_amount_paid')
         read_only_fields = ('id', 'email', 'role', 'status', 'created_at')
 
     def get_profile_picture(self, obj):
@@ -88,6 +89,11 @@ class UserSerializer(serializers.ModelSerializer):
                 return 'CANCELLED'
             return 'DISABLED'
         return 'DISABLED'
+
+    def get_total_amount_paid(self, obj):
+        from django.db.models import Sum
+        total_obj = obj.payments.filter(payment_status='SUCCESS').aggregate(total=Sum('amount'))
+        return float(total_obj['total']) if total_obj['total'] else 0.0
 
 
 class RegisterSerializer(serializers.ModelSerializer):

@@ -365,7 +365,7 @@ class VerifyPaymentView(views.APIView):
                 existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
                 
                 start_date = current_date
-                if existing_membership:
+                if existing_membership and existing_membership.end_date >= current_date:
                     start_date = existing_membership.end_date + timezone.timedelta(days=1)
 
                 membership = Membership.objects.create(
@@ -473,7 +473,7 @@ class RazorpayWebhookView(APIView):
                 existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
                 
                 start_date = current_date
-                if existing_membership:
+                if existing_membership and existing_membership.end_date >= current_date:
                     start_date = existing_membership.end_date + timezone.timedelta(days=1)
 
                 membership = Membership.objects.create(
@@ -1223,7 +1223,7 @@ class AutoPayVerifyPaymentView(views.APIView):
             existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
             
             start_date = current_date
-            if existing_membership:
+            if existing_membership and existing_membership.end_date >= current_date:
                 start_date = existing_membership.end_date + timezone.timedelta(days=1)
 
             membership = Membership.objects.create(
@@ -1331,7 +1331,7 @@ class RazorpayAutoPayWebhookView(APIView):
                 existing_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
                 
                 start_date = current_date
-                if existing_membership:
+                if existing_membership and existing_membership.end_date >= current_date:
                     start_date = existing_membership.end_date + timezone.timedelta(days=1)
 
                 membership = Membership.objects.create(
