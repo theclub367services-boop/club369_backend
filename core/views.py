@@ -1052,7 +1052,7 @@ class ForgotPasswordView(views.APIView):
 
     def post(self, request):
         email = request.data.get('email')
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email).first()
         
         # If user exists, send password link
         if user:
