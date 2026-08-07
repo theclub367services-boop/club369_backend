@@ -452,9 +452,12 @@ class RazorpayWebhookView(APIView):
         event = payload.get("event")
 
         if event == "payment.captured":
-            payment_entity = payload["payload"]["payment"]["entity"]
-            razorpay_payment_id = payment_entity["id"]
-            razorpay_order_id = payment_entity["order_id"]
+            payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+            razorpay_payment_id = payment_entity.get("id")
+            razorpay_order_id = payment_entity.get("order_id")
+            
+            if not razorpay_order_id:
+                return Response({"status": "ignored - no order_id"}, status=status.HTTP_200_OK)
 
             if Payment.objects.filter(transaction_id=razorpay_payment_id).exists():
                 return Response({"status": "already processed"}, status=status.HTTP_200_OK)
