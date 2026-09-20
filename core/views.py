@@ -1253,17 +1253,33 @@ class CancelAutoPayView(views.APIView):
             if pending_sub:
                 pending_sub.autopay_status = 'CANCELLED'
                 pending_sub.save(update_fields=['autopay_status'])
-                return Response({"message": "Pending AutoPay setup discarded"}, status=status.HTTP_200_OK)
-            return Response({'error': 'No active AutoPay subscription found'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    "success": True,
+                    "message": "Pending AutoPay setup discarded",
+                    "data": {"message": "Pending AutoPay setup discarded"}
+                }, status=status.HTTP_200_OK)
+            return Response({
+                "success": False,
+                "message": "No active AutoPay subscription found",
+                "errors": {"error": "No active AutoPay subscription found"}
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             client.subscription.cancel(subscription.razorpay_subscription_id)
             subscription.autopay_status = 'CANCELLED'
             subscription.save(update_fields=['autopay_status'])
 
-            return Response({"message": "AutoPay cancelled successfully"}, status=status.HTTP_200_OK)
+            return Response({
+                "success": True,
+                "message": "AutoPay cancelled successfully",
+                "data": {"message": "AutoPay cancelled successfully"}
+            }, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "success": False,
+                "message": str(e),
+                "errors": {"error": str(e)}
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 class AutoPayVerifyPaymentView(views.APIView):
     """
