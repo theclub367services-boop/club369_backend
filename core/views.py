@@ -238,6 +238,9 @@ class VerifySessionView(views.APIView):
 
 # --- Membership & Payments ---
 
+WHITELISTED_SUBSCRIPTION_AMOUNTS = [5000.00]
+PLACEHOLDER_EMAILS = {"void@razorpay.com", "test@razorpay.com"}
+
 client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
 class CreateRazorpayOrderView(views.APIView):
@@ -246,7 +249,7 @@ class CreateRazorpayOrderView(views.APIView):
     def post(self, request):
         user = request.user
 
-        # Prevent manual order if AutoPay is ENABLED
+        # 1. Prevent manual order if AutoPay is ENABLED
         existing_autopay = AutoPaySubscription.objects.filter(user=user, autopay_status='ENABLED').first()
         if existing_autopay:
             return Response({
@@ -255,12 +258,48 @@ class CreateRazorpayOrderView(views.APIView):
                 "errors": "autopay_active"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = 5000 * 100  # Amount in paise (₹5000)
+        # 2. Strict Active Membership Collision Guard (Only allow renewal <= 5 days before expiry)
+        current_date = timezone.now().date()
+        active_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
+        if active_membership and active_membership.end_date:
+            days_remaining = (active_membership.end_date - current_date).days
+            if days_remaining > 5:
+                return Response({
+                    "success": False,
+                    "message": f"Membership is currently active with {days_remaining} days remaining. Renewal is only permitted within 5 days of expiry.",
+                    "errors": "active_subscription_exists"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Strict Plan and Amount Whitelisting
+        requested_amount = request.data.get('amount', 5000.00)
+        try:
+            requested_amount = float(requested_amount)
+        except (ValueError, TypeError):
+            requested_amount = 5000.00
+
+        if requested_amount not in WHITELISTED_SUBSCRIPTION_AMOUNTS:
+            logger.warning(f"SECURITY_ALERT: Unauthorized subscription amount attempt by user {user.id}: ₹{requested_amount}")
+            return Response({
+                "success": False,
+                "message": "Invalid subscription tier amount.",
+                "errors": "invalid_amount_tier"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        amount_paise = int(requested_amount * 100)
+
+        # 4. Strict Identity Validation in Metadata
+        order_notes = {
+            'user_id': str(user.id),
+            'email': user.email,
+            'name': getattr(user, 'full_name', '') or user.email,
+            'plan_name': 'Membership Subscription'
+        }
         
         order_data = {
-            'amount': amount,
+            'amount': amount_paise,
             'currency': 'INR',
-            'payment_capture': 1 
+            'payment_capture': 1,
+            'notes': order_notes
         }
         
         try:
@@ -268,9 +307,9 @@ class CreateRazorpayOrderView(views.APIView):
             
             # Save the secure order reference
             PaymentOrder.objects.create(
-                user=request.user,
+                user=user,
                 razorpay_order_id=razorpay_order.get("id"),
-                amount=amount / 100, # Store in actual currency unit (₹)
+                amount=requested_amount,
                 currency='INR',
                 status="CREATED"
             )
@@ -285,6 +324,7 @@ class CreateRazorpayOrderView(views.APIView):
                 }
             }, status=status.HTTP_201_CREATED)
         except Exception as e:
+            logger.error(f"Failed to create Razorpay order for user {user.id}: {str(e)}")
             return Response({
                 "success": False,
                 "message": "Failed to create order",
@@ -305,7 +345,6 @@ class VerifyPaymentView(views.APIView):
 
         # 1. Idempotency Check: Already processed?
         if Payment.objects.filter(transaction_id=razorpay_payment_id).exists():
-            print(f"DEBUG: Verify - Payment already processed by webhook for {razorpay_payment_id}")
             return Response({
                 "success": True,
                 "message": "Payment already verified via backup webhook",
@@ -321,10 +360,19 @@ class VerifyPaymentView(views.APIView):
         ).first()
 
         if not order:
-            print(f"DEBUG: Verify failed - Order not found or user mismatch: {razorpay_order_id}")
+            logger.warning(f"Verify failed - Order not found or user mismatch: {razorpay_order_id} for user {user.id}")
             return Response({
                 "success": False,
                 "message": "Invalid or unauthorized order reference",
+                "data": None
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Strict Amount Whitelisting
+        if float(order.amount) not in WHITELISTED_SUBSCRIPTION_AMOUNTS:
+            logger.warning(f"SECURITY_ALERT: Verify rejected for non-whitelisted order amount: ₹{order.amount}")
+            return Response({
+                "success": False,
+                "message": "Invalid subscription tier amount.",
                 "data": None
             }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -370,7 +418,7 @@ class VerifyPaymentView(views.APIView):
 
                 membership = Membership.objects.create(
                     user=user,
-                    plan_name='Membership Plan',
+                    plan_name='Membership Subscription',
                     amount=order.amount,
                     start_date=start_date,
                     end_date=add_one_month(start_date),
@@ -422,21 +470,26 @@ class VerifyPaymentView(views.APIView):
 
 from django.utils.decorators import method_decorator
 
-
 @method_decorator(csrf_exempt, name='dispatch')
 class RazorpayWebhookView(APIView):
     """
-    Backup processor:
+    Primary/Backup processor:
     If the frontend verification fails (e.g. browser close), Razorpay will call this.
+    Guarantees resilient responses to keep webhook delivery enabled on Razorpay live dashboard.
     """
     permission_classes = [] 
 
     def post(self, request):
-        webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None)
+        webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None) or os.getenv("RAZORPAY_WEBHOOK_SECRET")
         if not webhook_secret:
+            logger.error("RAZORPAY_WEBHOOK_SECRET not configured on server.")
             return Response({"error": "Webhook secret not configured"}, status=status.HTTP_200_OK)
 
         received_signature = request.headers.get("X-Razorpay-Signature")
+        if not received_signature:
+            logger.warning("Webhook received without X-Razorpay-Signature header.")
+            return Response({"error": "Missing signature header"}, status=status.HTTP_400_BAD_REQUEST)
+
         body = request.body
 
         try:
@@ -445,20 +498,34 @@ class RazorpayWebhookView(APIView):
                 received_signature,
                 webhook_secret
             )
+        except razorpay.errors.SignatureVerificationError:
+            logger.warning("Razorpay webhook signature verification failed.")
+            return Response({"error": "Invalid webhook signature"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Webhook signature parsing error: {str(e)}")
+            return Response({"error": "Signature parse error"}, status=status.HTTP_400_BAD_REQUEST)
 
-        payload = json.loads(body)
+        try:
+            payload = json.loads(body.decode('utf-8'))
+        except Exception as e:
+            logger.error(f"Webhook payload JSON decode failed: {str(e)}")
+            return Response({"status": "ignored - malformed JSON"}, status=status.HTTP_200_OK)
+
         event = payload.get("event")
 
         if event == "payment.captured":
             payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
             razorpay_payment_id = payment_entity.get("id")
             razorpay_order_id = payment_entity.get("order_id")
+            amount_captured = float(payment_entity.get("amount", 0)) / 100.0
+            payer_email = payment_entity.get("email", "")
             
+            # If no order ID is present (e.g., direct QRv2 payment / standalone link), acknowledge safely without granting membership
             if not razorpay_order_id:
+                logger.info(f"External/QR payment received without order_id: {razorpay_payment_id}, amount: ₹{amount_captured}")
                 return Response({"status": "ignored - no order_id"}, status=status.HTTP_200_OK)
 
+            # Idempotency check: Already processed?
             if Payment.objects.filter(transaction_id=razorpay_payment_id).exists():
                 return Response({"status": "already processed"}, status=status.HTTP_200_OK)
 
@@ -466,8 +533,20 @@ class RazorpayWebhookView(APIView):
                 razorpay_order_id=razorpay_order_id
             ).select_related('user').first()
 
+            # Handle foreign orders (orders created outside standard app flow)
             if not order:
+                logger.warning(f"SECURITY_NOTICE: Payment received for untracked order {razorpay_order_id} (Payment ID: {razorpay_payment_id}, Email: {payer_email}). Membership not granted.")
                 return Response({"status": "order not found"}, status=status.HTTP_200_OK)
+
+            # Strict Plan Amount Verification: Guard against anomalous amounts (e.g. ₹1,000 on a ₹5,000 plan)
+            if amount_captured != float(order.amount) or amount_captured not in WHITELISTED_SUBSCRIPTION_AMOUNTS:
+                logger.critical(f"SECURITY_ALERT: Non-whitelisted or mismatched amount on order {order.id}: expected ₹{order.amount}, received ₹{amount_captured}. Membership upgrade blocked.")
+                return Response({"status": "amount mismatch flagged"}, status=status.HTTP_200_OK)
+
+            # Strict Identity Check: Disallow placeholder email corruption if user is unverified
+            if payer_email in PLACEHOLDER_EMAILS and not order.user:
+                logger.critical(f"SECURITY_ALERT: Placeholder email {payer_email} with no verified user on order {order.id}. Blocked.")
+                return Response({"status": "placeholder email rejected"}, status=status.HTTP_200_OK)
 
             user = order.user
 
@@ -481,15 +560,16 @@ class RazorpayWebhookView(APIView):
 
                 membership = Membership.objects.create(
                     user=user,
-                    plan_name="Membership Plan",
+                    plan_name="Membership Subscription",
                     amount=order.amount,
                     start_date=start_date,
                     end_date=add_one_month(start_date),
                     status="ACTIVE"
                 )
 
-                user.status = 'ACTIVE'
-                user.save()
+                if user.status != 'ACTIVE':
+                    user.status = 'ACTIVE'
+                    user.save(update_fields=['status'])
 
                 payment = Payment.objects.create(
                     user=user,
@@ -1106,14 +1186,21 @@ class EnableAutoPayView(views.APIView):
 
     def post(self, request):
         user = request.user
-        # Prevent if already enabled
+        # 1. Prevent if already enabled
         existing = AutoPaySubscription.objects.filter(user=user, autopay_status='ENABLED').first()
         if existing:
             return Response({'error': 'AutoPay is already enabled'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1. Create Razorpay Plan if needed, or assume you have a base PLAN_ID
-        # Hardcoding generic subscription details for MVP based on 5000 monthly
-        # Note: You need a real plan_id from your Razorpay Dashboard in production.
+        # 2. Strict Active Membership Collision Guard (Only allow if <= 5 days from expiry or inactive)
+        current_date = timezone.now().date()
+        active_membership = Membership.objects.filter(user=user, status='ACTIVE').order_by('-end_date').first()
+        if active_membership and active_membership.end_date:
+            days_remaining = (active_membership.end_date - current_date).days
+            if days_remaining > 5:
+                return Response({
+                    "error": f"Membership is currently active with {days_remaining} days remaining. AutoPay setup is available 5 days prior to expiry."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
         PLAN_ID = os.getenv('RAZORPAY_AUTOPAY_PLAN_ID') 
         if not PLAN_ID:
             return Response({'error': 'Server misconfiguration: No Plan ID'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -1124,7 +1211,10 @@ class EnableAutoPayView(views.APIView):
                 "customer_notify": 1,
                 "total_count": 12, # 1 year validity assumed
                 "notes": {
-                    "user_id": user.id,
+                    "user_id": str(user.id),
+                    "email": user.email,
+                    "name": getattr(user, 'full_name', '') or user.email,
+                    "plan_name": "AutoPay Membership Subscription"
                 }
             })
 
@@ -1145,6 +1235,7 @@ class EnableAutoPayView(views.APIView):
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
+            logger.error(f"Failed to create AutoPay subscription for user {user.id}: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class CancelAutoPayView(views.APIView):
@@ -1207,9 +1298,13 @@ class AutoPayVerifyPaymentView(views.APIView):
         # Get actual payment amount
         try:
             pmt = client.payment.fetch(payment_id)
-            amount = pmt.get('amount', 0) / 100
+            amount = float(pmt.get('amount', 0)) / 100.0
         except Exception:
             amount = 5000.00 # fallback
+
+        if amount not in WHITELISTED_SUBSCRIPTION_AMOUNTS:
+            logger.critical(f"SECURITY_ALERT: Non-whitelisted AutoPay payment amount: ₹{amount} for user {user.id}")
+            return Response({"error": "Invalid subscription tier amount"}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
             sub.autopay_status = 'ENABLED'
@@ -1264,15 +1359,21 @@ class AutoPayVerifyPaymentView(views.APIView):
 class RazorpayAutoPayWebhookView(APIView):
     """
     Dedicated webhook specifically for handling AutoPay Subscriptions events.
+    Guarantees resilient responses to keep webhook delivery enabled on Razorpay live dashboard.
     """
     permission_classes = [] 
 
     def post(self, request):
-        webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None)
+        webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None) or os.getenv("RAZORPAY_WEBHOOK_SECRET")
         if not webhook_secret:
+            logger.error("RAZORPAY_WEBHOOK_SECRET not configured on server.")
             return Response({"error": "Webhook secret not configured"}, status=status.HTTP_200_OK)
 
         received_signature = request.headers.get("X-Razorpay-Signature")
+        if not received_signature:
+            logger.warning("AutoPay webhook received without X-Razorpay-Signature header.")
+            return Response({"error": "Missing signature header"}, status=status.HTTP_400_BAD_REQUEST)
+
         body = request.body
 
         try:
@@ -1281,27 +1382,32 @@ class RazorpayAutoPayWebhookView(APIView):
                 received_signature,
                 webhook_secret
             )
+        except razorpay.errors.SignatureVerificationError:
+            logger.warning("AutoPay webhook signature verification failed.")
+            return Response({"error": "Invalid webhook signature"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"AutoPay webhook signature parse error: {str(e)}")
+            return Response({"error": "Signature parse error"}, status=status.HTTP_400_BAD_REQUEST)
 
-        payload = json.loads(body)
-        # print("WEBHOOK PAYLOAD RECEIVED:", json.dumps(payload, indent=2))
+        try:
+            payload = json.loads(body.decode('utf-8'))
+        except Exception as e:
+            logger.error(f"AutoPay webhook payload JSON decode failed: {str(e)}")
+            return Response({"status": "ignored - malformed JSON"}, status=status.HTTP_200_OK)
+
         event = payload.get("event")
 
         # Handle subscription charged
-        # For Razorpay Subscriptions, the primary success event is subscription.charged.
-        # It contains both the subscription entity and the payment entity.
         if event in ["subscription.charged", "payment.captured"]:
-            # Extract payment entity
             payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
             razorpay_payment_id = payment_entity.get("id")
-            amount = payment_entity.get("amount", 0) / 100
+            amount = float(payment_entity.get("amount", 0)) / 100.0
             
             # Extract subscription entity (present in subscription.charged)
             subscription_entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
             sub_id = subscription_entity.get("id") or payment_entity.get("subscription_id")
             
-            # Notes are attached to the subscription, not the payment
+            # Notes attached to subscription
             notes = subscription_entity.get("notes", {}) or payment_entity.get("notes", {})
             user_id = notes.get("user_id") if isinstance(notes, dict) else None
             
@@ -1312,10 +1418,16 @@ class RazorpayAutoPayWebhookView(APIView):
                 sub = AutoPaySubscription.objects.filter(user_id=user_id, autopay_status__in=['ENABLED', 'PENDING']).first()
 
             if not sub:
+                logger.warning(f"AutoPay webhook: subscription not found for sub_id={sub_id}, user_id={user_id}")
                 return Response({"status": "subscription not found"}, status=status.HTTP_200_OK)
 
             if Payment.objects.filter(transaction_id=razorpay_payment_id).exists():
                 return Response({"status": "already processed"}, status=status.HTTP_200_OK)
+
+            # Strict Amount Verification
+            if amount not in WHITELISTED_SUBSCRIPTION_AMOUNTS:
+                logger.critical(f"SECURITY_ALERT: Non-whitelisted amount ₹{amount} on AutoPay subscription {sub.id}. Membership not extended.")
+                return Response({"status": "non-whitelisted amount flagged"}, status=status.HTTP_200_OK)
 
             with transaction.atomic():
                 sub.autopay_status = 'ENABLED'
@@ -1327,7 +1439,7 @@ class RazorpayAutoPayWebhookView(APIView):
 
                 if user.status == 'PENDING':
                     user.status = 'ACTIVE'
-                    user.save()
+                    user.save(update_fields=['status'])
 
                 # Extend or Create Membership for this billing cycle
                 current_date = timezone.now().date()
@@ -1367,7 +1479,6 @@ class RazorpayAutoPayWebhookView(APIView):
 
         # Handle subscription failed
         elif event == "payment.failed":
-            # For AutoPay, failed payments should mark cycle as UNPAID
             payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
             notes = payment_entity.get("notes", {})
             user_id = notes.get("user_id") if isinstance(notes, dict) else None

@@ -23,6 +23,7 @@ urlpatterns = [
 
     # Membership & Payment
     path('payments/webhook/', RazorpayWebhookView.as_view(), name='razorpay-webhook'),
+    path('payments/webhook', RazorpayWebhookView.as_view(), name='razorpay-webhook-noslash'),
     # Step 1: Initialize the payment
     path('payments/create-order/', CreateRazorpayOrderView.as_view(), name='create-razorpay-order'),
     # Step 2: Confirm the payment
@@ -56,6 +57,7 @@ urlpatterns = [
     path('autopay/enable/', EnableAutoPayView.as_view(), name='autopay-enable'),
     path('autopay/cancel/', CancelAutoPayView.as_view(), name='autopay-cancel'),
     path('autopay/webhook/', RazorpayAutoPayWebhookView.as_view(), name='autopay-webhook'),
+    path('autopay/webhook', RazorpayAutoPayWebhookView.as_view(), name='autopay-webhook-noslash'),
     path('autopay/verify-payment/', AutoPayVerifyPaymentView.as_view(), name='autopay-verify-payment'),
 
         #Forget Password
