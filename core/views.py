@@ -479,6 +479,9 @@ class RazorpayWebhookView(APIView):
     """
     permission_classes = [] 
 
+    def get(self, request):
+        return Response({"status": "webhook endpoint active"}, status=status.HTTP_200_OK)
+
     def post(self, request):
         webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None) or os.getenv("RAZORPAY_WEBHOOK_SECRET")
         if not webhook_secret:
@@ -1362,6 +1365,9 @@ class RazorpayAutoPayWebhookView(APIView):
     Guarantees resilient responses to keep webhook delivery enabled on Razorpay live dashboard.
     """
     permission_classes = [] 
+
+    def get(self, request):
+        return Response({"status": "autopay webhook endpoint active"}, status=status.HTTP_200_OK)
 
     def post(self, request):
         webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None) or os.getenv("RAZORPAY_WEBHOOK_SECRET")
